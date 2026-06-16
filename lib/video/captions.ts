@@ -1,0 +1,43 @@
+import { storage } from "@/lib/storage";
+import type { AudioSegment } from "@/lib/video/voice/types";
+import type { Reporter } from "@/lib/workflow/context";
+
+function formatTimestamp(totalSeconds: number): string {
+  const ms = Math.round((totalSeconds % 1) * 1000);
+  const s = Math.floor(totalSeconds) % 60;
+  const m = Math.floor(totalSeconds / 60) % 60;
+  const h = Math.floor(totalSeconds / 3600);
+  const pad = (n: number, len = 2) => String(n).padStart(len, "0");
+  return `${pad(h)}:${pad(m)}:${pad(s)},${pad(ms, 3)}`;
+}
+
+/** Build an SRT string from narration segments and their durations. */
+export function buildSrt(segments: AudioSegment[]): string {
+  let cursor = 0;
+  const blocks: string[] = [];
+  segments.forEach((segment, i) => {
+    const start = cursor;
+    const end = cursor + segment.durationSeconds;
+    cursor = end;
+    blocks.push(
+      `${i + 1}\n${formatTimestamp(start)} --> ${formatTimestamp(end)}\n${segment.text.trim()}\n`,
+    );
+  });
+  return blocks.join("\n");
+}
+
+export async function generateCaptions(opts: {
+  projectId: string;
+  segments: AudioSegment[];
+  reporter: Reporter;
+}): Promise<string> {
+  const { projectId, segments, reporter } = opts;
+  const srt = buildSrt(segments);
+  const { url } = await storage.save(
+    `projects/${projectId}/captions/captions.srt`,
+    srt,
+    "application/x-subrip",
+  );
+  await reporter.log("Captions (SRT) generated.");
+  return url;
+}

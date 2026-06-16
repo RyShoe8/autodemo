@@ -1,0 +1,41 @@
+# dependencies
+/node_modules
+/.pnp
+.pnp.js
+
+# next.js
+/.next/
+/out/
+next-env.d.ts
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# local env files
+.env
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# local file storage (dev)
+/storage/
+/public/storage/
+
+# remotion / playwright temp
+/.remotion/
+/playwright-report/
+/test-results/
+
+# editor
+.vscode/
+.idea/

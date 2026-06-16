@@ -1,0 +1,102 @@
+import { NextResponse, type NextRequest } from "next/server";
+import { z } from "zod";
+import { db } from "@/lib/db";
+import { workflowSchema } from "@/lib/validation/schemas";
+import { toProjectDTO, toJobDTO } from "@/lib/serialize";
+import { createLogger } from "@/lib/logger";
+
+export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
+
+const log = createLogger("api:workflows");
+
+const saveSchema = z.object({
+  projectId: z.string().min(1),
+  workflow: workflowSchema,
+});
+
+const actionSchema = z.object({
+  projectId: z.string().min(1),
+  action: z.enum(["approve", "regenerate"]),
+  workflow: workflowSchema.optional(),
+});
+
+/** Persist an edited workflow. */
+export async function PUT(req: NextRequest) {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+  const parsed = saveSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Validation failed", issues: parsed.error.flatten() },
+      { status: 422 },
+    );
+  }
+  const project = await db.updateProject(parsed.data.projectId, {
+    workflow: parsed.data.workflow,
+  });
+  if (!project) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+  return NextResponse.json({ project: toProjectDTO(project) });
+}
+
+/** Approve (start recording) or regenerate (re-run discovery) a workflow. */
+export async function POST(req: NextRequest) {
+  let body: unknown;
+  try {
+    body = await req.json();
+  } catch {
+    return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
+  }
+  const parsed = actionSchema.safeParse(body);
+  if (!parsed.success) {
+    return NextResponse.json(
+      { error: "Validation failed", issues: parsed.error.flatten() },
+      { status: 422 },
+    );
+  }
+
+  const { projectId, action, workflow } = parsed.data;
+  const project = await db.getProject(projectId);
+  if (!project) {
+    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  }
+
+  // Persist any inline workflow edits before acting.
+  if (workflow) {
+    await db.updateProject(projectId, { workflow });
+  }
+
+  try {
+    if (action === "approve") {
+      const current = workflow ?? project.workflow ?? [];
+      if (current.filter((s) => s.enabled).length === 0) {
+        return NextResponse.json(
+          { error: "Enable at least one step before approving" },
+          { status: 400 },
+        );
+      }
+      await db.updateProject(projectId, { status: "recording" });
+      const job = await db.createJob({ projectId, type: "produce" });
+      log.info(`Approved workflow for ${projectId}; produce job ${job.id}`);
+      return NextResponse.json({ job: toJobDTO(job) }, { status: 201 });
+    }
+
+    // regenerate
+    await db.updateProject(projectId, { status: "discovering" });
+    const job = await db.createJob({ projectId, type: "discover" });
+    log.info(`Regenerating workflow for ${projectId}; discover job ${job.id}`);
+    return NextResponse.json({ job: toJobDTO(job) }, { status: 201 });
+  } catch (err) {
+    log.error("Workflow action failed", err);
+    return NextResponse.json(
+      { error: "Failed to process workflow action" },
+      { status: 500 },
+    );
+  }
+}
