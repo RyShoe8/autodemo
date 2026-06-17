@@ -174,17 +174,15 @@ The worker is a plain Node process: `npm run worker` (which runs `tsx worker/ind
 
 ### Example: Render.com (Background Worker)
 
+Render's native Node builder does **not** allow root, so `npx playwright install --with-deps` fails with `su: Authentication failure`. Use the repo's **Dockerfile** instead — it is based on Microsoft's official Playwright image, which includes Chromium and all required OS libraries.
+
 1. New → **Background Worker**, connect this repo.
-2. Build command:
-   ```bash
-   npm install && npx playwright install --with-deps chromium
-   ```
-3. Start command:
-   ```bash
-   npm run worker
-   ```
-4. Add the same environment variables as the app (`MONGODB_URI`, `OPENAI_API_KEY`, `ENCRYPTION_KEY`, `STORAGE_DRIVER=blob`, `BLOB_READ_WRITE_TOKEN`, etc.).
-5. Recommended instance: 2 GB RAM or more. Add FFmpeg via Render's native apt support or rely on the Remotion fallback.
+2. Set **Environment** to **Docker** (not Node).
+3. Leave **Build command** and **Start command** empty — the [`Dockerfile`](Dockerfile) handles both.
+4. Add the same environment variables as the app (`MONGODB_URI`, `OPENAI_API_KEY`, `ENCRYPTION_KEY`, `STORAGE_DRIVER=blob`, `BLOB_READ_WRITE_TOKEN`, `NODE_ENV=production`, etc.).
+5. Recommended instance: **Standard (2 GB RAM)** or higher for headless Chromium + video rendering. Starter (512 MB) may OOM on heavy jobs.
+
+> You do not need Docker installed locally. Render builds the container from the Dockerfile when you push to GitHub. After the first deploy with Docker, trigger a manual redeploy if Render still shows the old Node build settings.
 
 ### Example: a VM (Ubuntu)
 
@@ -242,7 +240,7 @@ flowchart LR
 - [ ] `ENCRYPTION_KEY` set to a strong random value (rotating it invalidates stored passwords).
 - [ ] `STORAGE_DRIVER=blob` and `BLOB_READ_WRITE_TOKEN` set for **both** app and worker.
 - [ ] `OPENAI_API_KEY` set (otherwise workflows/scripts/voiceovers are mocked).
-- [ ] Worker host has `npx playwright install --with-deps chromium` run, and FFmpeg installed (or accepts the Remotion fallback).
+- [ ] Worker host has Playwright/Chromium available (Dockerfile on Render, or `npx playwright install --with-deps chromium` on a VM), and FFmpeg installed (or accepts the Remotion fallback).
 - [ ] Worker runs under a process manager (pm2/systemd) or a managed background-worker service.
 - [ ] `APP_BASE_URL` set to the public URL.
 - [ ] HTTPS enabled (the session cookie is `Secure` in production).
