@@ -4,7 +4,6 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import type { ProjectDTO } from "@/types";
 import { formatDate } from "@/lib/utils";
 
@@ -31,14 +30,12 @@ export function ProjectInfo({ project }: { project: ProjectDTO }) {
           )}
         </Row>
         <Row label="Bumper">
-          {project.bumperEnabled ? (
-            project.bumperUrl ? (
-              <Badge variant="success">Generated</Badge>
-            ) : (
-              <Badge variant="secondary">Not generated</Badge>
-            )
+          {!project.bumperEnabled ? (
+            <span className="text-muted-foreground">Disabled</span>
+          ) : project.bumperUrl ? (
+            <span>Ready</span>
           ) : (
-            <Badge variant="secondary">Disabled</Badge>
+            <span className="text-muted-foreground">Not set</span>
           )}
         </Row>
         <Row label="Created">{formatDate(project.createdAt)}</Row>

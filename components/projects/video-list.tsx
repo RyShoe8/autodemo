@@ -11,6 +11,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { VideoStatusBadge } from "@/components/status/status-badge";
+import { DeleteVideoButton } from "@/components/projects/delete-video-button";
 import type { ProjectVideoDTO } from "@/types";
 
 export function VideoList({
@@ -50,10 +51,10 @@ export function VideoList({
         ) : (
           <ul className="divide-y rounded-lg border">
             {videos.map((video) => (
-              <li key={video.id}>
+              <li key={video.id} className="flex items-center gap-2">
                 <Link
                   href={`/projects/${projectId}/videos/${video.id}`}
-                  className="flex items-center justify-between gap-3 p-4 hover:bg-accent/40"
+                  className="flex min-w-0 flex-1 items-center justify-between gap-3 p-4 hover:bg-accent/40"
                 >
                   <div className="min-w-0">
                     <p className="font-medium">{video.name}</p>
@@ -68,6 +69,15 @@ export function VideoList({
                     <Film className="h-4 w-4 text-muted-foreground" />
                   </div>
                 </Link>
+                <div className="pr-2">
+                  <DeleteVideoButton
+                    projectId={projectId}
+                    videoId={video.id}
+                    videoName={video.name}
+                    videoStatus={video.status}
+                    compact
+                  />
+                </div>
               </li>
             ))}
           </ul>

@@ -126,7 +126,7 @@ export class MongooseBackend implements DbBackend {
   ): Promise<ProjectRecord | null> {
     await connectMongo();
     const doc = await ProjectModel.findByIdAndUpdate(id, patch, {
-      new: true,
+      returnDocument: "after",
     }).lean();
     return doc ? mapProject(doc) : null;
   }
@@ -174,7 +174,7 @@ export class MongooseBackend implements DbBackend {
   ): Promise<ProjectVideoRecord | null> {
     await connectMongo();
     const doc = await ProjectVideoModel.findByIdAndUpdate(id, patch, {
-      new: true,
+      returnDocument: "after",
     }).lean();
     return doc ? mapVideo(doc) : null;
   }
@@ -245,7 +245,7 @@ export class MongooseBackend implements DbBackend {
   ): Promise<JobRecord | null> {
     await connectMongo();
     const doc = await JobModel.findByIdAndUpdate(id, patch, {
-      new: true,
+      returnDocument: "after",
     }).lean();
     return doc ? mapJob(doc) : null;
   }
@@ -269,7 +269,7 @@ export class MongooseBackend implements DbBackend {
           startedAt: new Date(),
         },
       },
-      { new: true },
+      { returnDocument: "after" },
     ).lean();
     return doc ? mapJob(doc) : null;
   }
@@ -308,7 +308,7 @@ export class MongooseBackend implements DbBackend {
   ): Promise<AssetRecord | null> {
     await connectMongo();
     const doc = await VideoAssetModel.findByIdAndUpdate(id, patch, {
-      new: true,
+      returnDocument: "after",
     }).lean();
     return doc ? mapAsset(doc) : null;
   }

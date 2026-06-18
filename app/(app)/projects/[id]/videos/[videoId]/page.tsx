@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { VideoStatusBadge } from "@/components/status/status-badge";
 import { VideoGenerationPanel } from "@/components/projects/video-generation-panel";
+import { DeleteVideoButton } from "@/components/projects/delete-video-button";
 
 export const dynamic = "force-dynamic";
 
@@ -42,6 +43,12 @@ export default async function VideoDetailPage({
             <ArrowLeft className="h-4 w-4" /> Project
           </Link>
         </Button>
+        <DeleteVideoButton
+          projectId={id}
+          videoId={videoId}
+          videoName={video.name}
+          videoStatus={video.status}
+        />
       </PageHeader>
 
       <div className="space-y-6">

@@ -7,6 +7,7 @@ import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { ProjectStatusBadge } from "@/components/status/status-badge";
 import { ProjectInfo } from "@/components/projects/project-info";
+import { ProjectBumperPanel } from "@/components/projects/project-bumper-panel";
 import { ProjectDiscoveryPanel } from "@/components/projects/project-discovery-panel";
 import { VideoList } from "@/components/projects/video-list";
 
@@ -37,6 +38,10 @@ export default async function ProjectDetailPage({
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
           <ProjectInfo project={project} />
+          <ProjectBumperPanel
+            projectId={id}
+            initialBumperUrl={project.bumperUrl}
+          />
           <VideoList
             projectId={id}
             videos={videos}

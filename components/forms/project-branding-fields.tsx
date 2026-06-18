@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import Image from "next/image";
-import { Loader2, Sparkles, Upload } from "lucide-react";
+import { Loader2, Upload } from "lucide-react";
 import {
   type Control,
   Controller,
@@ -22,8 +22,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { api } from "@/lib/api-client";
-import { assetDisplayUrl } from "@/lib/storage/urls";
+import { ProjectBumperPanel } from "@/components/projects/project-bumper-panel";
 
 type BrandingFormFields = {
   brandColor?: string;
@@ -52,9 +51,7 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [logoUrl, setLogoUrl] = useState(initialLogoUrl);
-  const [bumperUrl, setBumperUrl] = useState(initialBumperUrl);
   const [uploading, setUploading] = useState(false);
-  const [generating, setGenerating] = useState(false);
 
   async function uploadLogo(file: File) {
     if (!projectId) return;
@@ -78,21 +75,6 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
       toast.error(err instanceof Error ? err.message : "Could not upload logo");
     } finally {
       setUploading(false);
-    }
-  }
-
-  async function generateBumper() {
-    if (!projectId) return;
-    setGenerating(true);
-    try {
-      await api.post("/api/generate", {
-        projectId,
-        type: "render_bumper",
-      });
-      toast.success("Bumper generation started");
-    } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not start bumper job");
-      setGenerating(false);
     }
   }
 
@@ -233,38 +215,11 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
         </Field>
 
         {projectId && (
-          <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
-            <div className="min-w-0 flex-1">
-              <p className="text-sm font-medium">Project bumper</p>
-              <p className="text-xs text-muted-foreground">
-                {bumperUrl
-                  ? "Bumper generated — re-run after changing logo or colors."
-                  : "Not generated yet."}
-              </p>
-            </div>
-            {bumperUrl && (
-              <video
-                src={assetDisplayUrl(bumperUrl)}
-                className="h-16 w-28 rounded border object-cover"
-                muted
-                playsInline
-              />
-            )}
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              disabled={generating}
-              onClick={() => void generateBumper()}
-            >
-              {generating ? (
-                <Loader2 className="h-4 w-4 animate-spin" />
-              ) : (
-                <Sparkles className="h-4 w-4" />
-              )}
-              Generate bumper
-            </Button>
-          </div>
+          <ProjectBumperPanel
+            projectId={projectId}
+            initialBumperUrl={initialBumperUrl}
+            embedded
+          />
         )}
       </CardContent>
     </Card>

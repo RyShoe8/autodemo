@@ -92,7 +92,7 @@ export function ProjectDiscoveryPanel({
           )}
         </div>
 
-        {job && (job.type === "discover" || job.type === "render_bumper") && (
+        {job && job.type === "discover" && (
           <>
             <JobProgress job={job} />
             {!isTerminal && <JobLogs logs={job.logs} />}
