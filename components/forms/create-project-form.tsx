@@ -51,7 +51,7 @@ export function CreateProjectForm() {
     try {
       const { project } = await api.post<{ project: ProjectDTO }>(
         "/api/projects",
-        { ...values, bumperTitle: values.name },
+        { ...values, bumperTitle: values.bumperTitle?.trim() || values.name },
       );
       toast.success("Project created");
       router.push(`/projects/${project.id}`);

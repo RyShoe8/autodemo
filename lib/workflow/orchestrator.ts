@@ -145,11 +145,16 @@ async function runRenderBumper(ctx: PipelineContext, project: ProjectRecord) {
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "autodemo-bumper-"));
   const outPath = path.join(tmpDir, "bumper.mp4");
 
-  await ctx.log("Rendering project bumper…");
+  const title = project.bumperTitle?.trim() || project.name;
+  const tagline = project.bumperTagline?.trim() || undefined;
+
+  await ctx.log(
+    `Rendering bumper: "${title}"${tagline ? ` / "${tagline}"` : ""}…`,
+  );
   await renderBumperToFile(
     {
-      title: project.bumperTitle ?? project.name,
-      tagline: project.bumperTagline,
+      title,
+      tagline,
       logoUrl: project.logoUrl,
       brandColor: project.brandColor ?? "#38bdf8",
       durationSeconds: project.bumperDurationSeconds ?? 4,

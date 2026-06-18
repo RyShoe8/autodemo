@@ -33,6 +33,7 @@ export function ProjectBumperPanel({
   const bumperFileRef = useRef<HTMLInputElement>(null);
   const notifiedJobRef = useRef<string | null>(null);
   const [bumperUrl, setBumperUrl] = useState(initialBumperUrl);
+  const [previewVersion, setPreviewVersion] = useState(0);
   const [starting, setStarting] = useState(false);
   const [uploading, setUploading] = useState(false);
 
@@ -60,6 +61,7 @@ export function ProjectBumperPanel({
             `/api/projects/${projectId}`,
           );
           setBumperUrl(project.bumperUrl);
+          setPreviewVersion(Date.now());
         } catch {
           /* refresh will still load server data */
         }
@@ -102,6 +104,7 @@ export function ProjectBumperPanel({
       }
       const { bumperUrl: url } = (await res.json()) as { bumperUrl: string };
       setBumperUrl(url);
+      setPreviewVersion(Date.now());
       toast.success("Bumper uploaded");
       router.refresh();
     } catch (err) {
@@ -112,6 +115,11 @@ export function ProjectBumperPanel({
       setUploading(false);
     }
   }
+
+  const displayUrl = bumperUrl ? assetDisplayUrl(bumperUrl) : undefined;
+  const previewSrc = displayUrl
+    ? `${displayUrl}${displayUrl.includes("?") ? "&" : "?"}v=${previewVersion}`
+    : undefined;
 
   const content = (
     <div className="space-y-4">
@@ -170,9 +178,9 @@ export function ProjectBumperPanel({
           : "Generate a branded intro or upload an MP4/WebM file (max 100 MB)."}
       </p>
 
-      {bumperUrl && (
+      {previewSrc && (
         <video
-          src={assetDisplayUrl(bumperUrl)}
+          src={previewSrc}
           controls
           className="aspect-video w-full rounded-lg border bg-black"
         />
