@@ -91,9 +91,11 @@ function TitleCard({
 function SceneMedia({
   scene,
   index,
+  delayRenderTimeoutMs,
 }: {
   scene: RemotionScene;
   index: number;
+  delayRenderTimeoutMs: number;
 }) {
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
@@ -108,6 +110,8 @@ function SceneMedia({
     return (
       <OffthreadVideo
         src={staticFile(scene.videoAssetName!)}
+        delayRenderTimeoutInMilliseconds={delayRenderTimeoutMs}
+        delayRenderRetries={2}
         style={{
           width: "100%",
           height: "100%",
@@ -127,9 +131,15 @@ function SceneMedia({
     index % 2 === 0 ? [-20, 20] : [20, -20],
   );
 
+  const imageSrc = scene.screenshotAssetName
+    ? staticFile(scene.screenshotAssetName)
+    : scene.src;
+
   return (
     <Img
-      src={scene.src}
+      src={imageSrc}
+      delayRenderTimeoutInMilliseconds={delayRenderTimeoutMs}
+      delayRenderRetries={2}
       style={{
         width: "100%",
         height: "100%",
@@ -148,10 +158,12 @@ function Scene({
   scene,
   index,
   accent,
+  delayRenderTimeoutMs,
 }: {
   scene: RemotionScene;
   index: number;
   accent: string;
+  delayRenderTimeoutMs: number;
 }) {
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
@@ -183,7 +195,11 @@ function Scene({
             border: "1px solid rgba(148,163,184,0.15)",
           }}
         >
-          <SceneMedia scene={scene} index={index} />
+          <SceneMedia
+            scene={scene}
+            index={index}
+            delayRenderTimeoutMs={delayRenderTimeoutMs}
+          />
         </div>
       </AbsoluteFill>
 
@@ -239,13 +255,16 @@ export const DemoVideo: React.FC<DemoVideoProps> = ({
   outro,
   scenes,
   audioSrc,
+  audioAssetName,
   introFrames,
   outroFrames,
   bumperFrames,
   bumperEnabled,
   logoSrc,
+  logoAssetName,
   brandColor,
   accent,
+  delayRenderTimeoutMs = 120_000,
 }) => {
   const bumperOffset =
     bumperEnabled && bumperFrames > 0 ? bumperFrames : 0;
@@ -258,14 +277,18 @@ export const DemoVideo: React.FC<DemoVideoProps> = ({
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#05070d" }}>
-      {audioSrc ? <Audio src={audioSrc} /> : null}
+      {audioAssetName ? (
+        <Audio src={staticFile(audioAssetName)} />
+      ) : audioSrc ? (
+        <Audio src={audioSrc} />
+      ) : null}
 
       {bumperEnabled && bumperFrames > 0 ? (
         <Sequence from={0} durationInFrames={bumperFrames}>
           <BumperIntro
             title={title}
             tagline={intro}
-            logoSrc={logoSrc}
+            logoSrc={logoAssetName ? staticFile(logoAssetName) : logoSrc}
             brandColor={brandColor}
             durationInFrames={bumperFrames}
           />
@@ -293,7 +316,12 @@ export const DemoVideo: React.FC<DemoVideoProps> = ({
             from={from}
             durationInFrames={scene.durationInFrames}
           >
-            <Scene scene={scene} index={index} accent={accent} />
+            <Scene
+              scene={scene}
+              index={index}
+              accent={accent}
+              delayRenderTimeoutMs={delayRenderTimeoutMs}
+            />
           </Sequence>
         );
       })}

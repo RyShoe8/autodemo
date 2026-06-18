@@ -1,5 +1,6 @@
 import path from "node:path";
-import { toDataUri } from "@/lib/video/media-resolve";
+import { readAsset } from "@/lib/storage";
+import { env } from "@/lib/env";
 import type { Reporter } from "@/lib/workflow/context";
 import type { CapturedScene, Script } from "@/types";
 import type { VoiceResult } from "@/lib/video/voice/types";
@@ -14,6 +15,11 @@ import {
   BUMPER_COMPOSITION_ID,
   type BumperVideoProps,
 } from "@/lib/remotion/BumperVideo";
+import {
+  screenshotAssetName,
+  stageAssetsInRemotionBundle,
+} from "@/lib/video/remotion-assets";
+import { toDataUri } from "@/lib/video/media-resolve";
 
 export const RENDER_FPS = 30;
 
@@ -28,6 +34,8 @@ export interface RenderBuildInput {
   script: Script;
   scenes: CapturedScene[];
   voice: VoiceResult;
+  jobId: string;
+  bundleDir: string;
   /** Per-scene clip filenames staged in the bundle public folder. */
   sceneClipAssets?: Map<number, string>;
   branding: RenderBranding;
@@ -35,6 +43,16 @@ export interface RenderBuildInput {
 }
 
 const globalForRender = globalThis as unknown as { __remotionBundle__?: string };
+
+function logoAssetName(jobId: string, url: string): string {
+  const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "png";
+  return `logo-${jobId}.${ext === "jpeg" ? "jpg" : ext}`;
+}
+
+function narrationAssetName(jobId: string, url: string): string {
+  const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "mp3";
+  return `narration-${jobId}.${ext}`;
+}
 
 /** Bundle Remotion and return the output directory (used as serveUrl). */
 export async function ensureBundle(reporter: Reporter): Promise<string> {
@@ -54,7 +72,15 @@ export async function ensureBundle(reporter: Reporter): Promise<string> {
 export async function buildBaseProps(
   input: RenderBuildInput,
 ): Promise<DemoVideoProps> {
-  const { script, scenes, voice, sceneClipAssets, branding } = input;
+  const {
+    script,
+    scenes,
+    voice,
+    jobId,
+    bundleDir,
+    sceneClipAssets,
+    branding,
+  } = input;
   const segments = voice.segments;
   const introFrames = Math.round((segments[0]?.durationSeconds ?? 5) * RENDER_FPS);
   const outroFrames = Math.round(
@@ -64,37 +90,56 @@ export async function buildBaseProps(
     ? Math.round(branding.bumperDurationSeconds * RENDER_FPS)
     : 0;
 
-  const logoSrc = branding.logoUrl
-    ? await toDataUri(branding.logoUrl)
-    : undefined;
+  const stageInputs: { assetName: string; buffer: Buffer }[] = [];
+  let logoAsset: string | undefined;
+  let audioAsset: string | undefined;
+
+  if (branding.logoUrl && !branding.logoUrl.startsWith("data:")) {
+    logoAsset = logoAssetName(jobId, branding.logoUrl);
+    stageInputs.push({
+      assetName: logoAsset,
+      buffer: await readAsset(branding.logoUrl),
+    });
+  }
+
+  if (voice.audioUrl && !voice.audioUrl.startsWith("data:")) {
+    audioAsset = narrationAssetName(jobId, voice.audioUrl);
+    stageInputs.push({
+      assetName: audioAsset,
+      buffer: await readAsset(voice.audioUrl),
+    });
+  }
 
   const count = Math.min(scenes.length, script.scenes.length);
   const remotionScenes: RemotionScene[] = [];
+
   for (let i = 0; i < count; i++) {
     const scene = scenes[i];
     const scriptScene = script.scenes[i];
     const seg = segments[i + 1];
     const scriptDuration =
       seg?.durationSeconds ?? scriptScene.durationSeconds ?? 6;
+    const hasVideoClip = Boolean(sceneClipAssets?.get(i));
 
-    let clipDuration = scriptDuration;
-    if (
-      scene.videoStartMs !== undefined &&
-      scene.videoEndMs !== undefined
-    ) {
-      const clipSec = (scene.videoEndMs - scene.videoStartMs) / 1000;
-      clipDuration = Math.max(scriptDuration, clipSec);
+    let screenshotAsset: string | undefined;
+    if (!hasVideoClip && scene.screenshot && !scene.screenshot.startsWith("data:")) {
+      screenshotAsset = screenshotAssetName(jobId, i, scene.screenshot);
+      stageInputs.push({
+        assetName: screenshotAsset,
+        buffer: await readAsset(scene.screenshot),
+      });
     }
 
     remotionScenes.push({
-      src: await toDataUri(scene.screenshot),
+      src: hasVideoClip || screenshotAsset ? "" : await toDataUri(scene.screenshot),
       heading: scriptScene.heading,
       narration: scriptScene.narration,
       durationInFrames: Math.max(
         RENDER_FPS,
-        Math.round(clipDuration * RENDER_FPS),
+        Math.round(scriptDuration * RENDER_FPS),
       ),
       videoAssetName: sceneClipAssets?.get(i),
+      screenshotAssetName: screenshotAsset,
       transition: transitionForIndex(i),
     });
   }
@@ -115,9 +160,23 @@ export async function buildBaseProps(
     }
   }
 
-  const audioSrc = voice.audioUrl
-    ? await toDataUri(voice.audioUrl)
-    : undefined;
+  if (stageInputs.length > 0) {
+    await stageAssetsInRemotionBundle(bundleDir, stageInputs);
+  }
+
+  const logoSrc =
+    logoAsset !== undefined
+      ? undefined
+      : branding.logoUrl
+        ? await toDataUri(branding.logoUrl)
+        : undefined;
+
+  const audioSrc =
+    audioAsset !== undefined
+      ? undefined
+      : voice.audioUrl
+        ? await toDataUri(voice.audioUrl)
+        : undefined;
 
   const accent = branding.brandColor;
 
@@ -127,11 +186,14 @@ export async function buildBaseProps(
     outro: script.outro,
     scenes: remotionScenes,
     audioSrc,
+    audioAssetName: audioAsset,
     introFrames,
     outroFrames,
     bumperFrames,
     bumperEnabled: branding.bumperEnabled,
     logoSrc,
+    logoAssetName: logoAsset,
+    delayRenderTimeoutMs: env.remotionTimeoutMs,
     brandColor: branding.brandColor,
     width: 1920,
     height: 1080,
@@ -154,6 +216,7 @@ export async function renderToFile(
     serveUrl,
     id: DEMO_COMPOSITION_ID,
     inputProps: props,
+    timeoutInMilliseconds: env.remotionTimeoutMs,
   });
 
   const verbose = process.env.REMOTION_VERBOSE === "true";
@@ -185,6 +248,10 @@ export async function renderToFile(
       verbose,
       logLevel: verbose ? "verbose" : "info",
       cancelSignal,
+      timeoutInMilliseconds: env.remotionTimeoutMs,
+      concurrency: env.remotionConcurrency,
+      x264Preset: "veryfast",
+      crf: 18,
       onProgress: ({ progress }) => {
         const percent = Math.round(progress * 100);
         if (percent >= lastLoggedPercent + 5 || percent === 100) {
@@ -234,6 +301,7 @@ export async function renderBumperToFile(
     serveUrl,
     id: BUMPER_COMPOSITION_ID,
     inputProps: props,
+    timeoutInMilliseconds: env.remotionTimeoutMs,
   });
 
   await renderMedia({
@@ -251,6 +319,10 @@ export async function renderBumperToFile(
     inputProps: props,
     verbose: true,
     logLevel: "verbose",
+    timeoutInMilliseconds: env.remotionTimeoutMs,
+    concurrency: env.remotionConcurrency,
+    x264Preset: "veryfast",
+    crf: 18,
     onProgress: () => {},
   });
 }

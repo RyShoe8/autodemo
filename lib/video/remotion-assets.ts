@@ -65,44 +65,81 @@ export interface StagedClip {
   sizeInBytes: number;
 }
 
-/** Copy per-scene clips into the Remotion bundle public folder. */
-export async function stageClipsInRemotionBundle(
+export interface StageAssetInput {
+  assetName: string;
+  sourcePath?: string;
+  buffer?: Buffer;
+}
+
+function extensionFromUrl(url: string): string {
+  const ext = url.split("?")[0].split(".").pop()?.toLowerCase() ?? "";
+  if (ext === "jpeg") return "jpg";
+  return ext || "png";
+}
+
+export function screenshotAssetName(jobId: string, index: number, url: string): string {
+  return `scene-${jobId}-${index}.${extensionFromUrl(url)}`;
+}
+
+/** Write one or more assets into bundle public/ and patch the Remotion manifest. */
+export async function stageAssetsInRemotionBundle(
   bundleDir: string,
-  clips: Map<number, string>,
-  jobId: string,
-): Promise<StagedClip[]> {
-  const staged: StagedClip[] = [];
+  assets: StageAssetInput[],
+): Promise<Map<string, string>> {
   const manifestEntries: {
     assetName: string;
     sizeInBytes: number;
     lastModified: number;
   }[] = [];
 
-  for (const [sceneIndex, sourcePath] of clips) {
-    const assetName = `session-${jobId}-scene-${sceneIndex}.mp4`;
-    const dest = path.join(bundleDir, "public", assetName);
+  for (const asset of assets) {
+    const dest = path.join(bundleDir, "public", asset.assetName);
     await fs.mkdir(path.dirname(dest), { recursive: true });
-    await fs.copyFile(sourcePath, dest);
-
+    if (asset.buffer) {
+      await fs.writeFile(dest, asset.buffer);
+    } else if (asset.sourcePath) {
+      await fs.copyFile(asset.sourcePath, dest);
+    } else {
+      throw new Error(`No source for asset ${asset.assetName}`);
+    }
     const stat = await fs.stat(dest);
     manifestEntries.push({
-      assetName,
+      assetName: asset.assetName,
       sizeInBytes: stat.size,
       lastModified: stat.mtimeMs,
     });
+  }
+
+  if (manifestEntries.length === 0) return new Map();
+  return registerAssetsInBundleManifest(bundleDir, manifestEntries);
+}
+
+/** Copy per-scene clips into the Remotion bundle public folder. */
+export async function stageClipsInRemotionBundle(
+  bundleDir: string,
+  clips: Map<number, string>,
+  jobId: string,
+): Promise<StagedClip[]> {
+  const entries = [...clips.entries()].sort(([a], [b]) => a - b);
+  const assets: StageAssetInput[] = entries.map(([sceneIndex, sourcePath]) => ({
+    assetName: `session-${jobId}-scene-${sceneIndex}.mp4`,
+    sourcePath,
+  }));
+
+  const urls = await stageAssetsInRemotionBundle(bundleDir, assets);
+  const staged: StagedClip[] = [];
+
+  for (let i = 0; i < entries.length; i++) {
+    const [sceneIndex] = entries[i];
+    const assetName = assets[i].assetName;
+    const dest = path.join(bundleDir, "public", assetName);
+    const stat = await fs.stat(dest);
     staged.push({
       sceneIndex,
       assetName,
-      staticUrl: "",
+      staticUrl: urls.get(assetName) ?? "",
       sizeInBytes: stat.size,
     });
-  }
-
-  if (manifestEntries.length > 0) {
-    const urls = await registerAssetsInBundleManifest(bundleDir, manifestEntries);
-    for (const clip of staged) {
-      clip.staticUrl = urls.get(clip.assetName) ?? "";
-    }
   }
 
   return staged;

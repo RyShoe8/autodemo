@@ -287,13 +287,24 @@ async function runProduce(
   let sceneClipAssets: Map<number, string> | undefined;
   if (rawVideoPath) {
     const clipInputs = recording.scenes
-      .map((scene, index) => ({
-        index,
-        videoStartMs: scene.videoStartMs,
-        videoEndMs: scene.videoEndMs,
-      }))
+      .map((scene, index) => {
+        const seg = voice.segments[index + 1];
+        const maxDurationSec =
+          seg?.durationSeconds ?? script.scenes[index]?.durationSeconds ?? 6;
+        return {
+          index,
+          videoStartMs: scene.videoStartMs,
+          videoEndMs: scene.videoEndMs,
+          maxDurationSec,
+        };
+      })
       .filter(
-        (s): s is { index: number; videoStartMs: number; videoEndMs: number } =>
+        (s): s is {
+          index: number;
+          videoStartMs: number;
+          videoEndMs: number;
+          maxDurationSec: number;
+        } =>
           s.videoStartMs !== undefined && s.videoEndMs !== undefined,
       );
 
@@ -303,6 +314,7 @@ async function runProduce(
       clipInputs,
       clipsDir,
       ctx.jobId,
+      ctx,
     );
     await ctx.log(`Sliced ${localClips.size} scene clips from screen recording.`);
 
@@ -325,6 +337,8 @@ async function runProduce(
     script,
     scenes: recording.scenes,
     voice,
+    jobId: ctx.jobId,
+    bundleDir,
     sceneClipAssets,
     branding: {
       logoUrl: project.logoUrl,
@@ -376,7 +390,6 @@ async function runProduce(
   }
 
   const groupEntries = Array.from(variantGroups.entries());
-  let completedGroups = 0;
 
   const exportBranding = {
     bumperEnabled: project.bumperEnabled !== false,
@@ -384,58 +397,61 @@ async function runProduce(
     bumperDurationSeconds: project.bumperDurationSeconds ?? 4,
   };
 
-  for (const [variantKey, groupPlatforms] of groupEntries) {
-    const representative = groupPlatforms[0];
-    const spec = PLATFORM_SPECS[representative];
-    const isPortrait = spec.height > spec.width;
-    const maxSeconds = exportVariantMaxSeconds(groupPlatforms);
-    const platformLabels = groupPlatforms
-      .map((p) => PLATFORM_SPECS[p].label)
-      .join(", ");
+  const exportResults = await Promise.all(
+    groupEntries.map(async ([variantKey, groupPlatforms]) => {
+      const representative = groupPlatforms[0];
+      const spec = PLATFORM_SPECS[representative];
+      const isPortrait = spec.height > spec.width;
+      const maxSeconds = exportVariantMaxSeconds(groupPlatforms);
+      const platformLabels = groupPlatforms
+        .map((p) => PLATFORM_SPECS[p].label)
+        .join(", ");
 
-    await ctx.log(`Exporting ${variantKey} variant for ${platformLabels}…`);
-    await ctx.throwIfCancelled();
+      await ctx.log(`Exporting ${variantKey} variant for ${platformLabels}…`);
+      await ctx.throwIfCancelled();
 
-    const videoUrl = await exportPlatform({
-      projectId: project.id,
-      videoId: video.id,
-      masterPath,
-      baseProps,
-      platform: representative,
-      branding: exportBranding,
-      variantKey,
-      maxSeconds,
-      reporter: ctx,
-    });
+      const videoUrl = await exportPlatform({
+        projectId: project.id,
+        videoId: video.id,
+        masterPath,
+        baseProps,
+        platform: representative,
+        branding: exportBranding,
+        variantKey,
+        maxSeconds,
+        reporter: ctx,
+      });
 
-    const thumbnailUrl = await generateThumbnail({
-      projectId: `${project.id}/videos/${video.id}/${variantKey}`,
-      title: video.name,
-      headline: script.title,
-      baseScreenshotUrl: baseScreenshot,
-      width: isPortrait ? 720 : 1280,
-      height: isPortrait ? 1280 : 720,
-      reporter: ctx,
-    });
+      const thumbnailUrl = await generateThumbnail({
+        projectId: `${project.id}/videos/${video.id}/${variantKey}`,
+        title: video.name,
+        headline: script.title,
+        baseScreenshotUrl: baseScreenshot,
+        width: isPortrait ? 720 : 1280,
+        height: isPortrait ? 1280 : 720,
+        reporter: ctx,
+      });
 
-    for (const platform of groupPlatforms) {
+      return { variantKey, groupPlatforms, videoUrl, thumbnailUrl };
+    }),
+  );
+
+  for (const result of exportResults) {
+    for (const platform of result.groupPlatforms) {
       await db.createAsset({
         projectId: project.id,
         videoId: video.id,
         platform,
-        videoUrl,
+        videoUrl: result.videoUrl,
         audioUrl: voice.audioUrl,
-        thumbnailUrl,
+        thumbnailUrl: result.thumbnailUrl,
         captionUrl,
         script: scriptJson,
       });
     }
-
-    completedGroups += 1;
-    await ctx.setProgress(
-      80 + Math.round((completedGroups / groupEntries.length) * 18),
-    );
   }
+
+  await ctx.setProgress(98);
 
   await fs.rm(masterDir, { recursive: true, force: true }).catch(() => {});
 

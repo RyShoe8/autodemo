@@ -7,6 +7,8 @@ export interface RemotionScene {
   durationInFrames: number;
   /** Filename under bundle public/ — resolved via staticFile() in the composition. */
   videoAssetName?: string;
+  /** Filename under bundle public/ — resolved via staticFile() for screenshot fallback. */
+  screenshotAssetName?: string;
   videoStartMs?: number;
   videoEndMs?: number;
   transition?: SceneTransition;
@@ -18,11 +20,16 @@ export interface DemoVideoProps {
   outro: string;
   scenes: RemotionScene[];
   audioSrc?: string;
+  /** Filename under bundle public/ — resolved via staticFile() when set. */
+  audioAssetName?: string;
   introFrames: number;
   outroFrames: number;
   bumperFrames: number;
   bumperEnabled: boolean;
   logoSrc?: string;
+  /** Filename under bundle public/ — resolved via staticFile() when set. */
+  logoAssetName?: string;
+  delayRenderTimeoutMs?: number;
   brandColor: string;
   width: number;
   height: number;

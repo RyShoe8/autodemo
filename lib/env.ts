@@ -6,6 +6,8 @@
  * which integrations are configured and to report missing credentials on jobs.
  */
 
+import os from "node:os";
+
 function read(name: string): string | undefined {
   const value = process.env[name];
   if (value === undefined) return undefined;
@@ -41,6 +43,11 @@ export const env = {
 
   workerPollInterval: Number(read("WORKER_POLL_INTERVAL") ?? "3000"),
   appBaseUrl: read("APP_BASE_URL") ?? "http://localhost:3000",
+
+  remotionTimeoutMs: Number(read("REMOTION_TIMEOUT_MS") ?? "120000"),
+  remotionConcurrency: Number(
+    read("REMOTION_CONCURRENCY") ?? String(Math.min(4, os.cpus().length)),
+  ),
 
   nodeEnv: read("NODE_ENV") ?? "development",
 };
