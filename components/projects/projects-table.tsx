@@ -7,6 +7,7 @@ import {
   MoreHorizontal,
   Eye,
   Sparkles,
+  RefreshCw,
   Trash2,
   Loader2,
   FolderOpen,
@@ -42,7 +43,18 @@ import { ProjectStatusBadge } from "@/components/status/status-badge";
 import { useProjects } from "@/hooks/use-projects";
 import { api } from "@/lib/api-client";
 import { formatRelative } from "@/lib/utils";
-import { VOICE_LABELS, type ProjectDTO } from "@/types";
+import { VOICE_LABELS, type ProjectDTO, type ProjectStatus } from "@/types";
+
+function discoveryActionLabel(status: ProjectStatus): string {
+  if (
+    status === "awaiting_approval" ||
+    status === "completed" ||
+    status === "failed"
+  ) {
+    return "Re-run discovery";
+  }
+  return "Start discovery";
+}
 
 export function ProjectsTable() {
   const { projects, loading, refetch } = useProjects();
@@ -120,7 +132,9 @@ export function ProjectsTable() {
             </TableRow>
           </TableHeader>
           <TableBody>
-            {projects.map((project) => (
+            {projects.map((project) => {
+              const discoveryLabel = discoveryActionLabel(project.status);
+              return (
               <TableRow key={project.id}>
                 <TableCell>
                   <Link
@@ -163,7 +177,12 @@ export function ProjectsTable() {
                         onClick={() => generate(project)}
                         disabled={pendingId === project.id}
                       >
-                        <Sparkles className="h-4 w-4" /> Generate
+                        {discoveryLabel === "Re-run discovery" ? (
+                          <RefreshCw className="h-4 w-4" />
+                        ) : (
+                          <Sparkles className="h-4 w-4" />
+                        )}{" "}
+                        {discoveryLabel}
                       </DropdownMenuItem>
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
@@ -176,7 +195,8 @@ export function ProjectsTable() {
                   </DropdownMenu>
                 </TableCell>
               </TableRow>
-            ))}
+            );
+            })}
           </TableBody>
         </Table>
       </Card>

@@ -37,6 +37,10 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
 
   const status = job?.status;
   const isActive = status ? ACTIVE_STATUSES.includes(status) : false;
+  const canRerunDiscovery =
+    status === "awaiting_approval" ||
+    status === "completed" ||
+    status === "failed";
 
   async function start(type: "discover" | "produce") {
     setBusy(true);
@@ -109,11 +113,11 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
                 </Button>
               )}
 
-              {(status === "completed" || status === "failed") && (
+              {canRerunDiscovery && (
                 <Button
                   variant="outline"
                   onClick={() => start("discover")}
-                  disabled={busy}
+                  disabled={busy || isActive}
                 >
                   {busy ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
@@ -124,6 +128,13 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
                 </Button>
               )}
             </div>
+
+            {status === "awaiting_approval" && (
+              <p className="text-sm text-muted-foreground">
+                Not happy with the proposed workflow? Re-run discovery to crawl
+                the app again.
+              </p>
+            )}
 
             {(isActive || job.logs.length > 0) && (
               <div className="space-y-2">
