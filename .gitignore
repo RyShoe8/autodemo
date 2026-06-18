@@ -23,6 +23,7 @@ yarn-error.log*
 # local env files
 .env
 .env*.local
+.env.vercel
 
 # typescript
 *.tsbuildinfo
@@ -39,3 +40,4 @@ yarn-error.log*
 # editor
 .vscode/
 .idea/
+.vercel

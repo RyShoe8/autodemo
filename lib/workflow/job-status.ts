@@ -1,6 +1,7 @@
 import type { JobStatus } from "@/types";
 
 export const CANCELLED_BY_USER = "Cancelled by user";
+export const WORKER_INTERRUPTED = "Worker interrupted";
 
 export const ACTIVE_JOB_STATUSES: JobStatus[] = [
   "queued",

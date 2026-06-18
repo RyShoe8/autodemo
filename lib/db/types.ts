@@ -147,6 +147,7 @@ export interface DbBackend {
   ): Promise<JobRecord | null>;
   appendJobLog(id: string, line: string): Promise<void>;
   claimNextJob(): Promise<JobRecord | null>;
+  listInProgressJobs(): Promise<JobRecord[]>;
 
   // Assets
   createAsset(input: CreateAssetInput): Promise<AssetRecord>;

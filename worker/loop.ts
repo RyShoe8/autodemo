@@ -5,6 +5,7 @@ import { storage } from "@/lib/storage";
 import { createLogger } from "@/lib/logger";
 import { sleep } from "@/lib/utils";
 import { loadBrowserFnForVerify } from "@/lib/playwright/browser-eval/run";
+import { recoverOrphanedJobsOnStartup } from "@/lib/workflow/recover-orphaned-jobs";
 
 const log = createLogger("worker");
 
@@ -61,6 +62,8 @@ export async function runWorker(): Promise<void> {
     );
     process.exit(1);
   }
+
+  await recoverOrphanedJobsOnStartup();
 
   const shutdown = () => {
     if (!running) return;

@@ -15,6 +15,7 @@ import type {
   ProjectVideoRecord,
 } from "@/lib/db/types";
 import { firstStatusForType } from "@/lib/db/types";
+import { ACTIVE_JOB_STATUSES } from "@/lib/workflow/job-status";
 import type {
   Platform,
   ProjectStatus,
@@ -273,6 +274,15 @@ export class MongooseBackend implements DbBackend {
       { returnDocument: "after" },
     ).lean();
     return doc ? mapJob(doc) : null;
+  }
+
+  async listInProgressJobs(): Promise<JobRecord[]> {
+    await connectMongo();
+    const statuses = ACTIVE_JOB_STATUSES.filter((s) => s !== "queued");
+    const docs = await JobModel.find({ status: { $in: statuses } })
+      .sort({ updatedAt: 1 })
+      .lean();
+    return docs.map(mapJob);
   }
 
   async createAsset(input: CreateAssetInput): Promise<AssetRecord> {

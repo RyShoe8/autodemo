@@ -400,6 +400,11 @@ async function runProduce(
   };
 
   const exportParallel = process.env.EXPORT_PARALLEL === "true";
+  await ctx.log(
+    exportParallel
+      ? "Running platform exports in parallel (EXPORT_PARALLEL=true)…"
+      : "Running platform exports sequentially…",
+  );
 
   async function exportVariant(
     variantKey: string,

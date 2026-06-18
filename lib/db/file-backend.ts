@@ -13,6 +13,7 @@ import type {
   ProjectVideoRecord,
 } from "@/lib/db/types";
 import { firstStatusForType } from "@/lib/db/types";
+import { ACTIVE_JOB_STATUSES, isActiveJobStatus } from "@/lib/workflow/job-status";
 
 const DB_DIR = path.join(process.cwd(), "storage", "db");
 const LOCK_FILE = path.join(DB_DIR, ".lock");
@@ -337,6 +338,17 @@ export class FileBackend implements DbBackend {
       await writeCollection("jobs", jobs);
       return job;
     });
+  }
+
+  async listInProgressJobs(): Promise<JobRecord[]> {
+    const jobs = await readCollection<JobRecord>("jobs");
+    return jobs
+      .filter((j) => j.status !== "queued" && isActiveJobStatus(j.status))
+      .sort(
+        (a, b) =>
+          new Date(a.updatedAt ?? a.createdAt).getTime() -
+          new Date(b.updatedAt ?? b.createdAt).getTime(),
+      );
   }
 
   async createAsset(input: CreateAssetInput): Promise<AssetRecord> {
