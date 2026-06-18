@@ -246,6 +246,17 @@ export async function clickResolved(
   }
 
   const label = step?.title ?? resolved.roleName;
+  const interactive = step ? bestInteractiveMatch(step, map) : undefined;
+  if (interactive) {
+    const role = roleFromTag(interactive.tag);
+    const result = await tryClickLocator(
+      page,
+      page.getByRole(role, { name: interactive.name }),
+      "getByRole(interactive catalog)",
+    );
+    if (result.success) return result;
+  }
+
   if (label) {
     for (const role of ["button", "link", "tab"] as const) {
       const result = await tryClickLocator(
@@ -274,17 +285,6 @@ export async function clickResolved(
     if (result.success) return result;
   }
 
-  const interactive = step ? bestInteractiveMatch(step, map) : undefined;
-  if (interactive) {
-    const role = roleFromTag(interactive.tag);
-    const result = await tryClickLocator(
-      page,
-      page.getByRole(role, { name: interactive.name }),
-      "getByRole(interactive catalog)",
-    );
-    if (result.success) return result;
-  }
-
   return { success: false };
 }
 
@@ -306,6 +306,22 @@ export async function typeResolved(
       name: "css selector",
     });
   }
+  strategies.push({
+    locator: page.locator('[role="dialog"] input:not([type="hidden"])'),
+    name: "dialog input",
+  });
+  strategies.push({
+    locator: page.locator('[role="dialog"] textarea'),
+    name: "dialog textarea",
+  });
+  strategies.push({
+    locator: page.locator('[role="dialog"] [contenteditable="true"]'),
+    name: "dialog contenteditable",
+  });
+  strategies.push({
+    locator: page.getByRole("textbox"),
+    name: "getByRole(textbox)",
+  });
   if (label) {
     strategies.push({
       locator: page.getByLabel(new RegExp(label.slice(0, 40), "i")),
@@ -328,8 +344,22 @@ export async function typeResolved(
     try {
       const target = locator.first();
       await target.click({ timeout: 8000 }).catch(() => {});
-      await target.fill("");
-      await target.pressSequentially(text, { delay: 40 });
+      const isEditable = await target
+        .evaluate((el) => {
+          const html = el as HTMLElement;
+          return (
+            html.isContentEditable ||
+            html.getAttribute("contenteditable") === "true"
+          );
+        })
+        .catch(() => false);
+
+      if (isEditable) {
+        await target.pressSequentially(text, { delay: 40 });
+      } else {
+        await target.fill("");
+        await target.pressSequentially(text, { delay: 40 });
+      }
       return { success: true, strategy: name };
     } catch {
       /* try next */

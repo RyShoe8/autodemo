@@ -33,6 +33,10 @@ const ProjectSchema = new Schema(
     },
     workflow: { type: [WorkflowStepSchema], default: [] },
     applicationMap: { type: Schema.Types.Mixed },
+    logoUrl: { type: String },
+    brandColor: { type: String, default: "#38bdf8" },
+    bumperEnabled: { type: Boolean, default: true },
+    bumperDurationSeconds: { type: Number, default: 4, min: 2, max: 8 },
     status: {
       type: String,
       enum: [

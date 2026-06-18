@@ -3,12 +3,15 @@ import {
   AbsoluteFill,
   Audio,
   Img,
+  OffthreadVideo,
   Sequence,
   interpolate,
   spring,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
+import { BumperIntro } from "./BumperIntro";
+import { transitionForIndex, transitionStyle } from "./transitions";
 import type { DemoVideoProps, RemotionScene } from "./types";
 
 function TitleCard({
@@ -84,6 +87,67 @@ function TitleCard({
   );
 }
 
+function SceneMedia({
+  scene,
+  index,
+}: {
+  scene: RemotionScene;
+  index: number;
+}) {
+  const frame = useCurrentFrame();
+  const { width, height, fps } = useVideoConfig();
+  const duration = scene.durationInFrames;
+  const isPortrait = height > width;
+  const transition = scene.transition ?? transitionForIndex(index);
+  const { opacity, transform } = transitionStyle(transition, frame, duration);
+
+  const hasVideo =
+    scene.videoSrc &&
+    scene.videoStartMs !== undefined &&
+    scene.videoEndMs !== undefined;
+
+  if (hasVideo) {
+    const startFrame = Math.round((scene.videoStartMs! / 1000) * fps);
+    return (
+      <OffthreadVideo
+        src={scene.videoSrc!}
+        startFrom={startFrame}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: isPortrait ? "contain" : "cover",
+          backgroundColor: "#05070d",
+          opacity,
+          transform,
+        }}
+      />
+    );
+  }
+
+  const zoom = interpolate(frame, [0, duration], [1.08, 1.18]);
+  const panX = interpolate(
+    frame,
+    [0, duration],
+    index % 2 === 0 ? [-20, 20] : [20, -20],
+  );
+
+  return (
+    <Img
+      src={scene.src}
+      style={{
+        width: "100%",
+        height: "100%",
+        objectFit: isPortrait ? "contain" : "cover",
+        backgroundColor: isPortrait ? "#05070d" : undefined,
+        opacity,
+        transform: isPortrait
+          ? transform
+          : `${transform === "none" ? "" : transform + " "}${isPortrait ? "" : `scale(${zoom}) translateX(${panX}px)`}`.trim(),
+      }}
+    />
+  );
+}
+
 function Scene({
   scene,
   index,
@@ -96,28 +160,15 @@ function Scene({
   const frame = useCurrentFrame();
   const { width, height } = useVideoConfig();
   const duration = scene.durationInFrames;
+  const isPortrait = height > width;
 
-  // Ken Burns: alternate zoom-in / pan across scenes.
-  const zoom = interpolate(frame, [0, duration], [1.08, 1.18]);
-  const panX = interpolate(
-    frame,
-    [0, duration],
-    index % 2 === 0 ? [-20, 20] : [20, -20],
-  );
-  const fade = interpolate(
-    frame,
-    [0, 14, duration - 14, duration],
-    [0, 1, 1, 0],
-    { extrapolateLeft: "clamp", extrapolateRight: "clamp" },
-  );
-  const captionRise = interpolate(frame, [6, 24], [60, 0], {
+  const captionRise = interpolate(frame, [12, 30], [60, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const isPortrait = height > width;
 
   return (
-    <AbsoluteFill style={{ background: "#05070d", opacity: fade }}>
+    <AbsoluteFill style={{ background: "#05070d" }}>
       <AbsoluteFill
         style={{
           justifyContent: "center",
@@ -136,22 +187,10 @@ function Scene({
             border: "1px solid rgba(148,163,184,0.15)",
           }}
         >
-          <Img
-            src={scene.src}
-            style={{
-              width: "100%",
-              height: "100%",
-              objectFit: isPortrait ? "contain" : "cover",
-              backgroundColor: isPortrait ? "#05070d" : undefined,
-              transform: isPortrait
-                ? undefined
-                : `scale(${zoom}) translateX(${panX}px)`,
-            }}
-          />
+          <SceneMedia scene={scene} index={index} />
         </div>
       </AbsoluteFill>
 
-      {/* Lower-third caption / title card */}
       <AbsoluteFill
         style={{
           justifyContent: "flex-end",
@@ -206,26 +245,52 @@ export const DemoVideo: React.FC<DemoVideoProps> = ({
   audioSrc,
   introFrames,
   outroFrames,
+  bumperFrames,
+  bumperEnabled,
+  logoSrc,
+  brandColor,
   accent,
 }) => {
-  let cursor = introFrames;
+  const bumperOffset =
+    bumperEnabled && bumperFrames > 0 ? bumperFrames : 0;
+  const introOffset =
+    !bumperEnabled && introFrames > 0 ? introFrames : 0;
+  const scenesStart =
+    bumperOffset +
+    introOffset +
+    scenes.reduce((sum, s) => sum + s.durationInFrames, 0);
 
   return (
     <AbsoluteFill style={{ backgroundColor: "#05070d" }}>
       {audioSrc ? <Audio src={audioSrc} /> : null}
 
-      <Sequence durationInFrames={introFrames}>
-        <TitleCard
-          primary={title}
-          secondary={intro}
-          accent={accent}
-          durationInFrames={introFrames}
-        />
-      </Sequence>
+      {bumperEnabled && bumperFrames > 0 ? (
+        <Sequence from={0} durationInFrames={bumperFrames}>
+          <BumperIntro
+            title={title}
+            tagline={intro}
+            logoSrc={logoSrc}
+            brandColor={brandColor}
+            durationInFrames={bumperFrames}
+          />
+        </Sequence>
+      ) : null}
+
+      {!bumperEnabled && introFrames > 0 ? (
+        <Sequence from={0} durationInFrames={introFrames}>
+          <TitleCard
+            primary={title}
+            secondary={intro}
+            accent={accent}
+            durationInFrames={introFrames}
+          />
+        </Sequence>
+      ) : null}
 
       {scenes.map((scene, index) => {
-        const from = cursor;
-        cursor += scene.durationInFrames;
+        const from = bumperOffset + introOffset + scenes
+          .slice(0, index)
+          .reduce((sum, s) => sum + s.durationInFrames, 0);
         return (
           <Sequence
             key={index}
@@ -237,7 +302,7 @@ export const DemoVideo: React.FC<DemoVideoProps> = ({
         );
       })}
 
-      <Sequence from={cursor} durationInFrames={outroFrames}>
+      <Sequence from={scenesStart} durationInFrames={outroFrames}>
         <TitleCard
           primary={outro}
           secondary={title}

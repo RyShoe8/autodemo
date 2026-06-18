@@ -105,6 +105,9 @@ export class FileBackend implements DbBackend {
       const record: ProjectRecord = {
         id: uid("prj"),
         ...input,
+        brandColor: input.brandColor ?? "#38bdf8",
+        bumperEnabled: input.bumperEnabled ?? true,
+        bumperDurationSeconds: input.bumperDurationSeconds ?? 4,
         workflow: [],
         status: "draft",
         createdAt: new Date(),

@@ -34,7 +34,11 @@ export default async function WorkflowPage({
         </Button>
       </PageHeader>
 
-      <WorkflowEditor projectId={id} initialWorkflow={project.workflow} />
+      <WorkflowEditor
+        projectId={id}
+        initialWorkflow={project.workflow}
+        bumperEnabled={project.bumperEnabled}
+      />
     </div>
   );
 }

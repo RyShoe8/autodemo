@@ -1,8 +1,13 @@
-import type { Browser, Page } from "playwright";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import type { Browser, BrowserContext, Page } from "playwright";
 import { isBlobStorageError } from "@/lib/storage/blob-utils";
 import { storage } from "@/lib/storage";
+import { convertWebmToMp4 } from "@/lib/ffmpeg/convert";
 import { placeholderScreenshotSVG } from "@/lib/media/placeholder";
 import { login } from "@/lib/playwright/discovery";
+import { waitForModalInput } from "@/lib/playwright/modal-input";
 import { navigateAndWait, waitForAppReady } from "@/lib/playwright/spa";
 import {
   clickResolved,
@@ -48,6 +53,7 @@ export async function captureStep(
   origin: string,
   reporter: Reporter,
   applicationMap?: ApplicationMap,
+  previousStep?: WorkflowStep,
 ): Promise<void> {
   const resolved = resolveStep(step, applicationMap);
   const urlBefore = page.url();
@@ -77,6 +83,9 @@ export async function captureStep(
         break;
       }
       case "type": {
+        if (previousStep?.actionType === "click") {
+          await waitForModalInput(page);
+        }
         const result = await typeResolved(page, resolved, step);
         if (!result.success) {
           await reporter.log(
@@ -124,12 +133,14 @@ export async function captureStep(
   }
 }
 
-/** Capture a scene (screenshot) for a step and persist it. */
+/** Capture a scene (screenshot + timestamps) for a step. */
 export async function recordScene(
   page: Page,
   step: WorkflowStep,
   projectId: string,
   order: number,
+  videoStartMs: number,
+  videoEndMs: number,
 ): Promise<CapturedScene> {
   const buffer = await page.screenshot({ fullPage: false });
   const { url } = await storage.save(
@@ -142,6 +153,8 @@ export async function recordScene(
     title: step.title,
     screenshot: url,
     durationSeconds: estimateDuration(step),
+    videoStartMs,
+    videoEndMs,
   };
 }
 
@@ -177,10 +190,48 @@ async function buildMockScenes(
   return scenes;
 }
 
+async function finalizeScreenRecording(
+  context: BrowserContext,
+  page: Page,
+  projectId: string,
+  reporter: Reporter,
+): Promise<string | undefined> {
+  const video = page.video();
+  await context.close();
+  if (!video) return undefined;
+
+  const webmPath = await video.path();
+  if (!webmPath) return undefined;
+
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "autodemo-vid-"));
+  const mp4Path = path.join(tmpDir, "session.mp4");
+
+  try {
+    await convertWebmToMp4(webmPath, mp4Path);
+    const buffer = await fs.readFile(mp4Path);
+    const { url } = await storage.save(
+      `projects/${projectId}/recording/session.mp4`,
+      buffer,
+      "video/mp4",
+    );
+    const durationSec = Math.round(buffer.length / 50000);
+    await reporter.log(
+      `Screen recording saved (session.mp4, ~${Math.max(1, durationSec)}s).`,
+    );
+    return url;
+  } catch (err) {
+    await reporter.log(
+      `Screen recording conversion failed (${err instanceof Error ? err.message : String(err)}) — using screenshot fallback.`,
+    );
+    return undefined;
+  } finally {
+    await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
+}
+
 /**
  * Execute the approved workflow against the live application, capturing a scene
- * per enabled step. Falls back to discovery/placeholder screenshots when a
- * browser is unavailable or the target cannot be reached.
+ * per enabled step with continuous screen recording after login.
  */
 export async function executeWorkflow(
   opts: RecordOptions,
@@ -196,35 +247,81 @@ export async function executeWorkflow(
   }
 
   let browser: Browser | null = null;
+  let recordContext: BrowserContext | null = null;
   try {
     const { chromium } = await import("playwright");
     await reporter.log("Launching browser for recording…");
     browser = await chromium.launch({ headless: true });
-    const context = await browser.newContext({
+
+    const loginContext = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       ignoreHTTPSErrors: true,
     });
-    const page = await context.newPage();
+    const loginPage = await loginContext.newPage();
     const origin = new URL(url).origin;
 
-    await navigateAndWait(page, url);
-    const loggedIn = await login(page, email, password, reporter);
+    await navigateAndWait(loginPage, url);
+    const loggedIn = await login(loginPage, email, password, reporter);
     if (!loggedIn) {
       await reporter.log(
         "WARNING: Recording without authenticated session — scenes may show login or public pages only.",
       );
     }
 
+    const postLoginUrl = loginPage.url();
+    const storageState = await loginContext.storageState();
+    await loginContext.close();
+
+    const videoDir = await fs.mkdtemp(path.join(os.tmpdir(), "autodemo-rec-"));
+    recordContext = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      ignoreHTTPSErrors: true,
+      storageState,
+      recordVideo: {
+        dir: videoDir,
+        size: { width: 1280, height: 800 },
+      },
+    });
+    const page = await recordContext.newPage();
+    await navigateAndWait(page, postLoginUrl);
+
+    const recordingStart = Date.now();
     const scenes: CapturedScene[] = [];
+
     for (let i = 0; i < enabledSteps.length; i++) {
       const step = enabledSteps[i];
+      const videoStartMs = Date.now() - recordingStart;
       await reporter.log(
         `Recording step ${i + 1}/${enabledSteps.length}: ${step.title}`,
       );
-      await captureStep(page, step, origin, reporter, applicationMap);
-      const scene = await recordScene(page, step, projectId, i);
+      const previousStep = i > 0 ? enabledSteps[i - 1] : undefined;
+      await captureStep(
+        page,
+        step,
+        origin,
+        reporter,
+        applicationMap,
+        previousStep,
+      );
+      const videoEndMs = Date.now() - recordingStart;
+      const scene = await recordScene(
+        page,
+        step,
+        projectId,
+        i,
+        videoStartMs,
+        videoEndMs,
+      );
       scenes.push(scene);
     }
+
+    const rawVideo = await finalizeScreenRecording(
+      recordContext,
+      page,
+      projectId,
+      reporter,
+    );
+    recordContext = null;
 
     await browser.close();
     browser = null;
@@ -232,6 +329,7 @@ export async function executeWorkflow(
     return {
       scenes,
       screenshots: scenes.map((s) => s.screenshot),
+      rawVideo,
     };
   } catch (err) {
     await reporter.log(
@@ -242,11 +340,11 @@ export async function executeWorkflow(
     } else {
       await reporter.missing("Playwright browser / reachable target application");
     }
+    if (recordContext) await recordContext.close().catch(() => {});
     if (browser) await browser.close().catch(() => {});
     const scenes = await buildMockScenes(opts, enabledSteps);
     return { scenes, screenshots: scenes.map((s) => s.screenshot) };
   }
 }
 
-/** Alias matching the architecture spec naming. */
 export const generateAssets = executeWorkflow;

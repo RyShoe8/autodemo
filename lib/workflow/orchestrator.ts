@@ -69,8 +69,16 @@ async function runDiscover(ctx: PipelineContext, project: ProjectRecord) {
     email: project.loginEmail,
     password,
     reporter: ctx,
+    existingLogoUrl: project.logoUrl,
   });
-  await db.updateProject(project.id, { applicationMap });
+
+  const { discoveredLogoUrl, ...mapForStorage } = applicationMap;
+  await db.updateProject(project.id, {
+    applicationMap: mapForStorage,
+    ...(!project.logoUrl && discoveredLogoUrl
+      ? { logoUrl: discoveredLogoUrl }
+      : {}),
+  });
   await ctx.setProgress(40);
 
   await ctx.setStatus("building_workflow", "discovering", 55);
@@ -147,6 +155,13 @@ async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
     script,
     scenes: recording.scenes,
     voice,
+    rawVideo: recording.rawVideo,
+    branding: {
+      logoUrl: project.logoUrl,
+      brandColor: project.brandColor ?? "#38bdf8",
+      bumperEnabled: project.bumperEnabled !== false,
+      bumperDurationSeconds: project.bumperDurationSeconds ?? 4,
+    },
     reporter: ctx,
   });
 

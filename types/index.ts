@@ -85,6 +85,8 @@ export interface ApplicationMap {
   interactives?: InteractiveElement[];
   screenshots: string[];
   uiText: string[];
+  /** Favicon fetched during discovery when no user logo exists. */
+  discoveredLogoUrl?: string;
 }
 
 export interface ScriptScene {
@@ -106,6 +108,8 @@ export interface CapturedScene {
   title: string;
   screenshot: string;
   durationSeconds: number;
+  videoStartMs?: number;
+  videoEndMs?: number;
 }
 
 export interface RecordingResult {
@@ -144,6 +148,10 @@ export interface ProjectDTO {
   platforms: Platform[];
   workflow: WorkflowStep[];
   status: ProjectStatus;
+  logoUrl?: string;
+  brandColor: string;
+  bumperEnabled: boolean;
+  bumperDurationSeconds: number;
   createdAt: string;
 }
 

@@ -61,6 +61,7 @@ function buildVariantProps(
     height: spec.height,
     introFrames: scale(baseProps.introFrames),
     outroFrames: scale(baseProps.outroFrames),
+    bumperFrames: scale(baseProps.bumperFrames),
     scenes: baseProps.scenes.map((s) => ({
       ...s,
       durationInFrames: scale(s.durationInFrames),

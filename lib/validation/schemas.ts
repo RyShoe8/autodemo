@@ -43,6 +43,12 @@ export const createProjectSchema = z.object({
     .array(platformEnum)
     .min(1, "Select at least one platform"),
   voiceOption: voiceEnum.default("openai_tts"),
+  brandColor: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/, "Enter a valid hex color")
+    .default("#38bdf8"),
+  bumperEnabled: z.boolean().default(true),
+  bumperDurationSeconds: z.number().min(2).max(8).default(4),
 });
 
 export type CreateProjectValues = z.input<typeof createProjectSchema>;

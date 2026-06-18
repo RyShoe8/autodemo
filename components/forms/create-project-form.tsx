@@ -26,6 +26,7 @@ import {
 import { PLATFORM_SPECS, VOICE_LABELS, type Platform, type VoiceOption } from "@/types";
 import type { ProjectDTO } from "@/types";
 import { api } from "@/lib/api-client";
+import { ProjectBrandingFields } from "@/components/forms/project-branding-fields";
 
 const PLATFORMS: Platform[] = [
   "youtube",
@@ -61,6 +62,9 @@ export function CreateProjectForm() {
       prompt: "",
       platforms: ["youtube"],
       voiceOption: "openai_tts",
+      brandColor: "#38bdf8",
+      bumperEnabled: true,
+      bumperDurationSeconds: 4,
     },
   });
 
@@ -225,6 +229,8 @@ export function CreateProjectForm() {
           />
         </CardContent>
       </Card>
+
+      <ProjectBrandingFields control={control} register={register} errors={errors} />
 
       <div className="flex justify-end gap-2">
         <Button

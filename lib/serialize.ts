@@ -12,6 +12,10 @@ export function toProjectDTO(record: ProjectRecord): ProjectDTO {
     platforms: record.platforms,
     workflow: record.workflow ?? [],
     status: record.status,
+    logoUrl: record.logoUrl,
+    brandColor: record.brandColor ?? "#38bdf8",
+    bumperEnabled: record.bumperEnabled !== false,
+    bumperDurationSeconds: record.bumperDurationSeconds ?? 4,
     createdAt: new Date(record.createdAt).toISOString(),
   };
 }

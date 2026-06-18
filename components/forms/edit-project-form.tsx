@@ -31,6 +31,7 @@ import {
   type VoiceOption,
 } from "@/types";
 import { api } from "@/lib/api-client";
+import { ProjectBrandingFields } from "@/components/forms/project-branding-fields";
 
 const PLATFORMS: Platform[] = [
   "youtube",
@@ -66,6 +67,9 @@ export function EditProjectForm({ project }: { project: ProjectDTO }) {
       prompt: project.prompt,
       platforms: project.platforms,
       voiceOption: project.voiceOption,
+      brandColor: project.brandColor,
+      bumperEnabled: project.bumperEnabled,
+      bumperDurationSeconds: project.bumperDurationSeconds,
     },
   });
 
@@ -220,6 +224,14 @@ export function EditProjectForm({ project }: { project: ProjectDTO }) {
           />
         </CardContent>
       </Card>
+
+      <ProjectBrandingFields
+        control={control}
+        register={register}
+        errors={errors}
+        projectId={project.id}
+        initialLogoUrl={project.logoUrl}
+      />
 
       <div className="flex justify-end gap-2">
         <Button

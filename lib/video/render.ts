@@ -9,20 +9,28 @@ import {
   type DemoVideoProps,
   type RemotionScene,
 } from "@/lib/remotion/types";
+import { transitionForIndex } from "@/lib/remotion/transitions";
 
 export const RENDER_FPS = 30;
-const ACCENT = "#38bdf8";
+
+export interface RenderBranding {
+  logoUrl?: string;
+  brandColor: string;
+  bumperEnabled: boolean;
+  bumperDurationSeconds: number;
+}
 
 export interface RenderBuildInput {
   script: Script;
   scenes: CapturedScene[];
   voice: VoiceResult;
+  rawVideo?: string;
+  branding: RenderBranding;
   reporter: Reporter;
 }
 
 const globalForRender = globalThis as unknown as { __remotionBundle__?: string };
 
-/** Bundle the Remotion project once and cache the served URL for reuse. */
 export async function ensureBundle(reporter: Reporter): Promise<string> {
   if (globalForRender.__remotionBundle__) return globalForRender.__remotionBundle__;
   const { bundle } = await import("@remotion/bundler");
@@ -40,12 +48,20 @@ export async function ensureBundle(reporter: Reporter): Promise<string> {
 export async function buildBaseProps(
   input: RenderBuildInput,
 ): Promise<DemoVideoProps> {
-  const { script, scenes, voice } = input;
+  const { script, scenes, voice, rawVideo, branding } = input;
   const segments = voice.segments;
   const introFrames = Math.round((segments[0]?.durationSeconds ?? 5) * RENDER_FPS);
   const outroFrames = Math.round(
     (segments[segments.length - 1]?.durationSeconds ?? 5) * RENDER_FPS,
   );
+  const bumperFrames = branding.bumperEnabled
+    ? Math.round(branding.bumperDurationSeconds * RENDER_FPS)
+    : 0;
+
+  const videoDataUri = rawVideo ? await toDataUri(rawVideo) : undefined;
+  const logoSrc = branding.logoUrl
+    ? await toDataUri(branding.logoUrl)
+    : undefined;
 
   const count = Math.min(scenes.length, script.scenes.length);
   const remotionScenes: RemotionScene[] = [];
@@ -53,19 +69,33 @@ export async function buildBaseProps(
     const scene = scenes[i];
     const scriptScene = script.scenes[i];
     const seg = segments[i + 1];
-    const durationSeconds = seg?.durationSeconds ?? scriptScene.durationSeconds ?? 6;
+    const scriptDuration =
+      seg?.durationSeconds ?? scriptScene.durationSeconds ?? 6;
+
+    let clipDuration = scriptDuration;
+    if (
+      scene.videoStartMs !== undefined &&
+      scene.videoEndMs !== undefined
+    ) {
+      const clipSec = (scene.videoEndMs - scene.videoStartMs) / 1000;
+      clipDuration = Math.max(scriptDuration, clipSec);
+    }
+
     remotionScenes.push({
       src: await toDataUri(scene.screenshot),
       heading: scriptScene.heading,
       narration: scriptScene.narration,
       durationInFrames: Math.max(
         RENDER_FPS,
-        Math.round(durationSeconds * RENDER_FPS),
+        Math.round(clipDuration * RENDER_FPS),
       ),
+      videoSrc: videoDataUri,
+      videoStartMs: scene.videoStartMs,
+      videoEndMs: scene.videoEndMs,
+      transition: transitionForIndex(i),
     });
   }
 
-  // If recording produced no scenes, still show scripted scenes without imagery.
   if (remotionScenes.length === 0 && script.scenes.length > 0) {
     for (let i = 0; i < script.scenes.length; i++) {
       const scriptScene = script.scenes[i];
@@ -77,6 +107,7 @@ export async function buildBaseProps(
           RENDER_FPS,
           Math.round((scriptScene.durationSeconds || 6) * RENDER_FPS),
         ),
+        transition: transitionForIndex(i),
       });
     }
   }
@@ -84,6 +115,8 @@ export async function buildBaseProps(
   const audioSrc = voice.audioUrl
     ? await toDataUri(voice.audioUrl)
     : undefined;
+
+  const accent = branding.brandColor;
 
   return {
     title: script.title,
@@ -93,14 +126,17 @@ export async function buildBaseProps(
     audioSrc,
     introFrames,
     outroFrames,
+    bumperFrames,
+    bumperEnabled: branding.bumperEnabled,
+    logoSrc,
+    brandColor: branding.brandColor,
     width: 1920,
     height: 1080,
     fps: RENDER_FPS,
-    accent: ACCENT,
+    accent,
   };
 }
 
-/** Render the given composition props to an mp4 file on disk. */
 export async function renderToFile(
   props: DemoVideoProps,
   outputPath: string,

@@ -1,8 +1,14 @@
+import type { SceneTransition } from "./transitions";
+
 export interface RemotionScene {
   src: string;
   heading: string;
   narration: string;
   durationInFrames: number;
+  videoSrc?: string;
+  videoStartMs?: number;
+  videoEndMs?: number;
+  transition?: SceneTransition;
 }
 
 export interface DemoVideoProps {
@@ -13,11 +19,14 @@ export interface DemoVideoProps {
   audioSrc?: string;
   introFrames: number;
   outroFrames: number;
+  bumperFrames: number;
+  bumperEnabled: boolean;
+  logoSrc?: string;
+  brandColor: string;
   width: number;
   height: number;
   fps: number;
   accent: string;
-  // Remotion requires composition props to be a string-indexed record.
   [key: string]: unknown;
 }
 
@@ -30,6 +39,9 @@ export const DEFAULT_DEMO_PROPS: DemoVideoProps = {
   scenes: [],
   introFrames: 90,
   outroFrames: 90,
+  bumperFrames: 120,
+  bumperEnabled: true,
+  brandColor: "#38bdf8",
   width: 1920,
   height: 1080,
   fps: 30,
@@ -41,5 +53,7 @@ export function computeDurationInFrames(props: DemoVideoProps): number {
     (sum, s) => sum + s.durationInFrames,
     0,
   );
-  return Math.max(1, props.introFrames + sceneFrames + props.outroFrames);
+  const bumper = props.bumperEnabled ? props.bumperFrames : 0;
+  const intro = props.bumperEnabled ? 0 : props.introFrames;
+  return Math.max(1, bumper + intro + sceneFrames + props.outroFrames);
 }

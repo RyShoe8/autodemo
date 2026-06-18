@@ -20,6 +20,10 @@ export interface ProjectRecord {
   workflow: WorkflowStep[];
   applicationMap?: ApplicationMap;
   status: ProjectStatus;
+  logoUrl?: string;
+  brandColor: string;
+  bumperEnabled: boolean;
+  bumperDurationSeconds: number;
   createdAt: Date;
 }
 
@@ -57,6 +61,9 @@ export interface CreateProjectInput {
   prompt: string;
   voiceOption: VoiceOption;
   platforms: Platform[];
+  brandColor?: string;
+  bumperEnabled?: boolean;
+  bumperDurationSeconds?: number;
 }
 
 export interface CreateJobInput {

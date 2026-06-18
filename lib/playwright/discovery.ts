@@ -9,6 +9,7 @@ import {
   waitForAppReady,
 } from "@/lib/playwright/spa";
 import { dismissOverlays } from "@/lib/playwright/overlays";
+import { fetchAndStoreSiteLogo } from "@/lib/playwright/favicon";
 import type { ApplicationMap, DiscoveredPage, InteractiveElement } from "@/types";
 import type { Reporter as PipelineReporter } from "@/lib/workflow/context";
 
@@ -19,6 +20,8 @@ export interface DiscoverOptions {
   password: string;
   reporter: PipelineReporter;
   maxPages?: number;
+  /** Skip favicon fetch when the project already has a user-uploaded logo. */
+  existingLogoUrl?: string;
 }
 
 const NAV_SELECTORS = [
@@ -514,6 +517,14 @@ export async function discoverApplication(
       }
     }
 
+    let discoveredLogoUrl: string | undefined;
+    if (!opts.existingLogoUrl) {
+      discoveredLogoUrl = await fetchAndStoreSiteLogo(page, origin, projectId);
+      if (discoveredLogoUrl) {
+        await reporter.log("Stored site favicon as default project logo.");
+      }
+    }
+
     await browser.close();
     browser = null;
 
@@ -529,6 +540,7 @@ export async function discoverApplication(
       interactives,
       screenshots,
       uiText: Array.from(uiText),
+      discoveredLogoUrl,
     };
   } catch (err) {
     await reporter.log(

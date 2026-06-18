@@ -49,6 +49,9 @@ export async function POST(req: NextRequest) {
       prompt: data.prompt,
       voiceOption: data.voiceOption,
       platforms: data.platforms,
+      brandColor: data.brandColor,
+      bumperEnabled: data.bumperEnabled,
+      bumperDurationSeconds: data.bumperDurationSeconds,
     });
     return NextResponse.json({ project: toProjectDTO(project) }, { status: 201 });
   } catch (err) {

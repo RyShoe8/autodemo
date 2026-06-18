@@ -19,7 +19,7 @@ import {
   verticalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
-import { GripVertical, Loader2, Save, Sparkles, RefreshCw } from "lucide-react";
+import { GripVertical, Loader2, Lock, Save, Sparkles, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -118,9 +118,11 @@ function SortableRow({
 export function WorkflowEditor({
   projectId,
   initialWorkflow,
+  bumperEnabled = false,
 }: {
   projectId: string;
   initialWorkflow: WorkflowStep[];
+  bumperEnabled?: boolean;
 }) {
   const router = useRouter();
   const [steps, setSteps] = useState<WorkflowStep[]>(
@@ -290,11 +292,27 @@ export function WorkflowEditor({
           strategy={verticalListSortingStrategy}
         >
           <div className="space-y-2">
+            {bumperEnabled && (
+              <div className="flex items-center gap-3 rounded-lg border border-dashed bg-muted/40 p-3">
+                <Lock className="h-5 w-5 shrink-0 text-muted-foreground" />
+                <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-secondary text-xs">
+                  1
+                </span>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium">Intro bumper</p>
+                  <p className="text-xs text-muted-foreground">
+                    Branded opener — rendered in Remotion only, not recorded by
+                    Playwright.
+                  </p>
+                </div>
+                <Badge variant="secondary">Remotion</Badge>
+              </div>
+            )}
             {steps.map((step, index) => (
               <SortableRow
                 key={step.id}
                 step={step}
-                index={index}
+                index={bumperEnabled ? index + 1 : index}
                 onToggle={toggle}
                 onRename={rename}
                 onUpdateField={updateField}

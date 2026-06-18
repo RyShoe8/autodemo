@@ -83,6 +83,11 @@ export async function PATCH(
     if (data.prompt !== undefined) patch.prompt = data.prompt;
     if (data.voiceOption !== undefined) patch.voiceOption = data.voiceOption;
     if (data.platforms !== undefined) patch.platforms = data.platforms;
+    if (data.brandColor !== undefined) patch.brandColor = data.brandColor;
+    if (data.bumperEnabled !== undefined) patch.bumperEnabled = data.bumperEnabled;
+    if (data.bumperDurationSeconds !== undefined) {
+      patch.bumperDurationSeconds = data.bumperDurationSeconds;
+    }
 
     if (data.loginPassword && data.loginPassword.length > 0) {
       patch.encryptedPassword = encrypt(data.loginPassword);

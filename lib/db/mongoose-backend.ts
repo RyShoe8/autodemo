@@ -34,6 +34,10 @@ function mapProject(doc: any): ProjectRecord {
     platforms: (doc.platforms ?? []) as Platform[],
     workflow: (doc.workflow ?? []) as WorkflowStep[],
     applicationMap: doc.applicationMap as ApplicationMap | undefined,
+    logoUrl: doc.logoUrl ?? undefined,
+    brandColor: doc.brandColor ?? "#38bdf8",
+    bumperEnabled: doc.bumperEnabled !== false,
+    bumperDurationSeconds: doc.bumperDurationSeconds ?? 4,
     status: doc.status as ProjectStatus,
     createdAt: doc.createdAt ?? new Date(),
   };
