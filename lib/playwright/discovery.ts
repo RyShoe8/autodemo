@@ -1,7 +1,6 @@
 import type { Browser, Page } from "playwright";
 import { storage } from "@/lib/storage";
 import { isBlobStorageError } from "@/lib/storage/blob-utils";
-import { placeholderScreenshotSVG } from "@/lib/media/placeholder";
 import {
   AUTH_ROUTE_PATTERN,
   navigateAndWait,
@@ -405,46 +404,9 @@ export async function extractVisibleText(page: Page): Promise<string[]> {
   });
 }
 
-function buildMockMap(opts: DiscoverOptions): ApplicationMap {
-  const sections = [
-    "Dashboard",
-    "Projects",
-    "Reports",
-    "Team",
-    "Settings",
-  ];
-  const pages: DiscoveredPage[] = sections.map((name, i) => {
-    const svg = placeholderScreenshotSVG({
-      title: name,
-      subtitle: opts.url,
-      index: i,
-    });
-    return {
-      url: `${opts.url.replace(/\/$/, "")}/${name.toLowerCase()}`,
-      title: name,
-      screenshot: `data:image/svg+xml;utf8,${encodeURIComponent(svg)}`,
-    };
-  });
-  return {
-    pages,
-    navigation: sections,
-    screenshots: pages.map((p) => p.screenshot!).filter(Boolean),
-    uiText: [
-      "Create new",
-      "Search",
-      "Filter",
-      "Invite teammate",
-      "Save changes",
-      "Export",
-      ...sections,
-    ],
-  };
-}
-
 /**
  * Visit the application, log in, crawl primary navigation, capture screenshots
- * and visible text, and return an application map. Falls back to a deterministic
- * mock map if a browser cannot be launched or the site is unreachable.
+ * and visible text, and return an application map.
  */
 export async function discoverApplication(
   opts: DiscoverOptions,
@@ -543,15 +505,14 @@ export async function discoverApplication(
       discoveredLogoUrl,
     };
   } catch (err) {
-    await reporter.log(
-      `Discovery via browser failed (${err instanceof Error ? err.message : String(err)}).`,
-    );
-    if (isBlobStorageError(err)) {
-      await reporter.missing("BLOB_ACCESS / Blob store access mismatch");
-    } else {
-      await reporter.missing("Playwright browser / reachable target application");
-    }
+    const detail = err instanceof Error ? err.message : String(err);
+    await reporter.log(`Discovery via browser failed (${detail}).`);
     if (browser) await browser.close().catch(() => {});
-    return buildMockMap(opts);
+
+    const hint = isBlobStorageError(err)
+      ? "Check BLOB_READ_WRITE_TOKEN and BLOB_ACCESS match your Vercel Blob store."
+      : "Deploy the standalone worker with Playwright (Dockerfile or npx playwright install chromium) and ensure the target URL is reachable from the worker network.";
+
+    throw new Error(`Browser discovery failed: ${detail}. ${hint}`);
   }
 }

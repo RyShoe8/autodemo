@@ -177,7 +177,16 @@ export default function SettingsPage() {
             <p className="text-xs text-muted-foreground">
               Start the worker with{" "}
               <code className="rounded bg-muted px-1 py-0.5">npm run worker</code>
-              . It must share the same database as the app.
+              . It must share the same database as the app. Discovery and recording
+              require Playwright — use the repo{" "}
+              <code className="rounded bg-muted px-1 py-0.5">
+                Dockerfile
+              </code>{" "}
+              or run{" "}
+              <code className="rounded bg-muted px-1 py-0.5">
+                npx playwright install chromium
+              </code>
+              .
             </p>
           </CardContent>
         </Card>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Sparkles, Loader2, RefreshCw } from "lucide-react";
@@ -40,17 +40,34 @@ export function ProjectDiscoveryPanel({
 }) {
   const router = useRouter();
   const { job, isTerminal } = useProjectJob(projectId);
+  const notifiedJobRef = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const jobStatus = job?.status;
+  const discoverJob = job?.type === "discover" ? job : null;
+  const jobStatus = discoverJob?.status;
   const isActive = jobStatus ? ACTIVE_STATUSES.includes(jobStatus) : false;
   const canDiscover =
     !isActive &&
+    !busy &&
     (status === "draft" ||
       status === "ready" ||
       status === "failed" ||
       status === "completed" ||
       status === "awaiting_approval");
+
+  useEffect(() => {
+    if (!discoverJob || !isTerminal) return;
+    if (notifiedJobRef.current === discoverJob.id) return;
+    notifiedJobRef.current = discoverJob.id;
+    setBusy(false);
+
+    if (discoverJob.status === "completed") {
+      toast.success("Discovery complete");
+    } else if (discoverJob.status === "failed") {
+      toast.error(discoverJob.error ?? "Discovery failed");
+    }
+    router.refresh();
+  }, [discoverJob, isTerminal, router]);
 
   async function startDiscover() {
     setBusy(true);
@@ -59,10 +76,14 @@ export function ProjectDiscoveryPanel({
       toast.success("Discovery started");
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not start discovery");
       setBusy(false);
+      toast.error(err instanceof Error ? err.message : "Could not start discovery");
     }
   }
+
+  const showLogs =
+    discoverJob &&
+    (isActive || discoverJob.status === "failed" || discoverJob.logs.length > 0);
 
   return (
     <Card>
@@ -76,7 +97,7 @@ export function ProjectDiscoveryPanel({
       <CardContent className="space-y-4">
         <div className="flex flex-wrap gap-2">
           <Button onClick={() => void startDiscover()} disabled={busy || isActive || !canDiscover}>
-            {busy || (isActive && job?.type === "discover") ? (
+            {busy || (isActive && discoverJob) ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : status === "ready" ? (
               <RefreshCw className="h-4 w-4" />
@@ -92,11 +113,27 @@ export function ProjectDiscoveryPanel({
           )}
         </div>
 
-        {job && job.type === "discover" && (
+        {discoverJob && (
           <>
-            <JobProgress job={job} />
-            {!isTerminal && <JobLogs logs={job.logs} />}
-            <MissingCredentials items={job.missingCredentials} />
+            <JobProgress job={discoverJob} />
+
+            {discoverJob.status === "failed" && discoverJob.error && (
+              <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                {discoverJob.error}
+              </p>
+            )}
+
+            {discoverJob.status === "completed" &&
+              discoverJob.missingCredentials.length > 0 && (
+                <MissingCredentials items={discoverJob.missingCredentials} />
+              )}
+
+            {showLogs && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Activity log</p>
+                <JobLogs logs={discoverJob.logs} />
+              </div>
+            )}
           </>
         )}
       </CardContent>

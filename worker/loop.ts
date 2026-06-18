@@ -23,6 +23,18 @@ export async function runWorker(): Promise<void> {
   }
   log.info(`Polling every ${env.workerPollInterval}ms.`);
 
+  try {
+    const { chromium } = await import("playwright");
+    const browser = await chromium.launch({ headless: true });
+    await browser.close();
+    log.info("Playwright Chromium launch check passed.");
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    log.warn(
+      `Playwright Chromium is not available (${detail}). Discovery and recording jobs will fail until the worker runs with Playwright installed — use the repo Dockerfile or run: npx playwright install chromium`,
+    );
+  }
+
   const shutdown = () => {
     if (!running) return;
     log.info("Shutdown signal received — finishing current job then exiting.");

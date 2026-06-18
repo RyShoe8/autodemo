@@ -1,9 +1,9 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Sparkles, Loader2, ListChecks, Film, RefreshCw } from "lucide-react";
+import { Loader2, ListChecks, Film, RefreshCw } from "lucide-react";
 import { toast } from "sonner";
 import {
   Card,
@@ -41,15 +41,27 @@ export function VideoGenerationPanel({
 }) {
   const router = useRouter();
   const { job, isTerminal } = useVideoJob(videoId);
+  const notifiedJobRef = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const jobStatus = job?.status;
+  const pipelineJob =
+    job?.type === "build_workflow" || job?.type === "produce" ? job : null;
+  const jobStatus = pipelineJob?.status;
   const isActive = jobStatus ? ACTIVE_STATUSES.includes(jobStatus) : false;
   const canProduce =
     !isActive &&
+    !busy &&
     (status === "awaiting_approval" ||
       status === "completed" ||
       status === "failed");
+
+  useEffect(() => {
+    if (!pipelineJob || !isTerminal) return;
+    if (notifiedJobRef.current === pipelineJob.id) return;
+    notifiedJobRef.current = pipelineJob.id;
+    setBusy(false);
+    router.refresh();
+  }, [pipelineJob, isTerminal, router]);
 
   async function startProduce() {
     setBusy(true);
@@ -62,10 +74,16 @@ export function VideoGenerationPanel({
       toast.success("Recording started");
       router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not start recording");
       setBusy(false);
+      toast.error(err instanceof Error ? err.message : "Could not start recording");
     }
   }
+
+  const showLogs =
+    pipelineJob &&
+    (isActive ||
+      pipelineJob.status === "failed" ||
+      pipelineJob.logs.length > 0);
 
   return (
     <Card>
@@ -96,8 +114,8 @@ export function VideoGenerationPanel({
             </Button>
           )}
           {canProduce && status !== "awaiting_approval" && (
-            <Button onClick={() => void startProduce()} disabled={busy}>
-              {busy ? (
+            <Button onClick={() => void startProduce()} disabled={busy || isActive}>
+              {busy || isActive ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <RefreshCw className="h-4 w-4" />
@@ -107,11 +125,27 @@ export function VideoGenerationPanel({
           )}
         </div>
 
-        {job && (job.type === "build_workflow" || job.type === "produce") && (
+        {pipelineJob && (
           <>
-            <JobProgress job={job} />
-            {!isTerminal && <JobLogs logs={job.logs} />}
-            <MissingCredentials items={job.missingCredentials} />
+            <JobProgress job={pipelineJob} />
+
+            {pipelineJob.status === "failed" && pipelineJob.error && (
+              <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">
+                {pipelineJob.error}
+              </p>
+            )}
+
+            {pipelineJob.status === "completed" &&
+              pipelineJob.missingCredentials.length > 0 && (
+                <MissingCredentials items={pipelineJob.missingCredentials} />
+              )}
+
+            {showLogs && (
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Activity log</p>
+                <JobLogs logs={pipelineJob.logs} />
+              </div>
+            )}
           </>
         )}
 
