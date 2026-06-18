@@ -31,6 +31,9 @@ export const env = {
 
   blobToken: read("BLOB_READ_WRITE_TOKEN"),
   storageDriver: (read("STORAGE_DRIVER") ?? "local") as "local" | "blob",
+  blobAccess: (read("BLOB_ACCESS") === "public" ? "public" : "private") as
+    | "public"
+    | "private",
 
   workerPollInterval: Number(read("WORKER_POLL_INTERVAL") ?? "3000"),
   appBaseUrl: read("APP_BASE_URL") ?? "http://localhost:3000",

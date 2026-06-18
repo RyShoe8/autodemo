@@ -1,4 +1,5 @@
 import type { Browser, Page } from "playwright";
+import { isBlobStorageError } from "@/lib/storage/blob-utils";
 import { storage } from "@/lib/storage";
 import { placeholderScreenshotSVG } from "@/lib/media/placeholder";
 import { login } from "@/lib/playwright/discovery";
@@ -200,7 +201,11 @@ export async function executeWorkflow(
     await reporter.log(
       `Recording via browser failed (${err instanceof Error ? err.message : String(err)}).`,
     );
-    await reporter.missing("Playwright browser / reachable target application");
+    if (isBlobStorageError(err)) {
+      await reporter.missing("BLOB_ACCESS / Blob store access mismatch");
+    } else {
+      await reporter.missing("Playwright browser / reachable target application");
+    }
     if (browser) await browser.close().catch(() => {});
     const scenes = await buildMockScenes(opts, enabledSteps);
     return { scenes, screenshots: scenes.map((s) => s.screenshot) };

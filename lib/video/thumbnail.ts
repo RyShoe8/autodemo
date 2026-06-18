@@ -1,4 +1,4 @@
-import { storage } from "@/lib/storage";
+import { readAsset, storage } from "@/lib/storage";
 import { placeholderThumbnailSVG } from "@/lib/media/placeholder";
 import type { Reporter } from "@/lib/workflow/context";
 
@@ -10,13 +10,6 @@ export interface ThumbnailOptions {
   width?: number;
   height?: number;
   reporter: Reporter;
-}
-
-function localKeyFromUrl(url?: string): string | null {
-  if (!url) return null;
-  const prefix = "/api/storage/";
-  if (url.startsWith(prefix)) return url.slice(prefix.length);
-  return null;
 }
 
 /**
@@ -37,10 +30,9 @@ export async function generateThumbnail(
     const sharp = (await import("sharp")).default;
 
     let base: Buffer | null = null;
-    const key = localKeyFromUrl(opts.baseScreenshotUrl);
-    if (key && key.endsWith(".png")) {
+    if (opts.baseScreenshotUrl?.endsWith(".png")) {
       try {
-        const screenshot = await storage.read(key);
+        const screenshot = await readAsset(opts.baseScreenshotUrl);
         base = await sharp(screenshot)
           .resize(width, height, { fit: "cover" })
           .modulate({ brightness: 0.55 })

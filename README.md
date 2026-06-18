@@ -129,6 +129,7 @@ cp .env.example .env
 | `ELEVENLABS_API_KEY` | Optional | Only used by the ElevenLabs voice option. |
 | `BLOB_READ_WRITE_TOKEN` | If `STORAGE_DRIVER=blob` | Vercel Blob token. |
 | `STORAGE_DRIVER` | Optional | `local` (default) or `blob`. |
+| `BLOB_ACCESS` | If `STORAGE_DRIVER=blob` | `private` (default, Vercel's default) or `public`. Must match your Blob store. |
 | `WORKER_POLL_INTERVAL` | Optional | Worker poll interval in ms (default `3000`). |
 | `APP_BASE_URL` | Optional | Public app URL (default `http://localhost:3000`). |
 
@@ -179,7 +180,7 @@ Render's native Node builder does **not** allow root, so `npx playwright install
 1. New → **Background Worker**, connect this repo.
 2. Set **Environment** to **Docker** (not Node).
 3. Leave **Build command** and **Start command** empty — the [`Dockerfile`](Dockerfile) handles both.
-4. Add the same environment variables as the app (`MONGODB_URI`, `OPENAI_API_KEY`, `ENCRYPTION_KEY`, `STORAGE_DRIVER=blob`, `BLOB_READ_WRITE_TOKEN`, `NODE_ENV=production`, etc.).
+4. Add the same environment variables as the app (`MONGODB_URI`, `OPENAI_API_KEY`, `ENCRYPTION_KEY`, `STORAGE_DRIVER=blob`, `BLOB_READ_WRITE_TOKEN`, `BLOB_ACCESS=private`, `NODE_ENV=production`, etc.).
 5. Recommended instance: **Standard (2 GB RAM)** or higher for headless Chromium + video rendering. Starter (512 MB) may OOM on heavy jobs.
 
 > You do not need Docker installed locally. Render builds the container from the Dockerfile when you push to GitHub. After the first deploy with Docker, trigger a manual redeploy if Render still shows the old Node build settings.
@@ -214,7 +215,7 @@ pm2 save
 3. Add environment variables in the Vercel project settings:
    - `MONGODB_URI`, `OPENAI_API_KEY`, `OPENAI_MODEL`
    - `ADMIN_PASSWORD`, `AUTH_SECRET`, `ENCRYPTION_KEY`
-   - `STORAGE_DRIVER=blob`, `BLOB_READ_WRITE_TOKEN`
+   - `STORAGE_DRIVER=blob`, `BLOB_READ_WRITE_TOKEN`, `BLOB_ACCESS=private` (or `public` if your store is public)
    - `APP_BASE_URL=https://your-app.vercel.app`
 4. Create a Vercel Blob store (Storage → Blob) — this provisions `BLOB_READ_WRITE_TOKEN`.
 5. Deploy.
@@ -238,7 +239,7 @@ flowchart LR
 - [ ] `ADMIN_PASSWORD` set to a strong value (not the `autodemo` default).
 - [ ] `AUTH_SECRET` set to a long random string.
 - [ ] `ENCRYPTION_KEY` set to a strong random value (rotating it invalidates stored passwords).
-- [ ] `STORAGE_DRIVER=blob` and `BLOB_READ_WRITE_TOKEN` set for **both** app and worker.
+- [ ] `STORAGE_DRIVER=blob`, `BLOB_READ_WRITE_TOKEN`, and `BLOB_ACCESS` matching your store set for **both** app and worker.
 - [ ] `OPENAI_API_KEY` set (otherwise workflows/scripts/voiceovers are mocked).
 - [ ] Worker host has Playwright/Chromium available (Dockerfile on Render, or `npx playwright install --with-deps chromium` on a VM), and FFmpeg installed (or accepts the Remotion fallback).
 - [ ] Worker runs under a process manager (pm2/systemd) or a managed background-worker service.

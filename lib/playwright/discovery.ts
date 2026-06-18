@@ -1,5 +1,6 @@
 import type { Browser, Page } from "playwright";
 import { storage } from "@/lib/storage";
+import { isBlobStorageError } from "@/lib/storage/blob-utils";
 import { placeholderScreenshotSVG } from "@/lib/media/placeholder";
 import type { ApplicationMap, DiscoveredPage } from "@/types";
 import type { Reporter as PipelineReporter } from "@/lib/workflow/context";
@@ -261,7 +262,11 @@ export async function discoverApplication(
     await reporter.log(
       `Discovery via browser failed (${err instanceof Error ? err.message : String(err)}).`,
     );
-    await reporter.missing("Playwright browser / reachable target application");
+    if (isBlobStorageError(err)) {
+      await reporter.missing("BLOB_ACCESS / Blob store access mismatch");
+    } else {
+      await reporter.missing("Playwright browser / reachable target application");
+    }
     if (browser) await browser.close().catch(() => {});
     return buildMockMap(opts);
   }

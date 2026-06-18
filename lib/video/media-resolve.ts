@@ -1,4 +1,4 @@
-import { storage } from "@/lib/storage";
+import { readAsset } from "@/lib/storage";
 
 const MIME: Record<string, string> = {
   png: "image/png",
@@ -24,21 +24,10 @@ export async function toDataUri(url: string): Promise<string> {
   if (!url) return url;
   if (url.startsWith("data:")) return url;
 
-  const localPrefix = "/api/storage/";
   try {
-    if (url.startsWith(localPrefix)) {
-      const key = url.slice(localPrefix.length);
-      const buffer = await storage.read(key);
-      return `data:${mimeFromUrl(key)};base64,${buffer.toString("base64")}`;
-    }
-    if (url.startsWith("http://") || url.startsWith("https://")) {
-      const res = await fetch(url);
-      const buffer = Buffer.from(await res.arrayBuffer());
-      const contentType = res.headers.get("content-type") ?? mimeFromUrl(url);
-      return `data:${contentType};base64,${buffer.toString("base64")}`;
-    }
+    const buffer = await readAsset(url);
+    return `data:${mimeFromUrl(url)};base64,${buffer.toString("base64")}`;
   } catch {
     return url;
   }
-  return url;
 }

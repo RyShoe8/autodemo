@@ -8,7 +8,7 @@ import { SESSION_COOKIE } from "@/lib/auth/constants";
  */
 
 const PUBLIC_PATHS = ["/login"];
-const PUBLIC_API_PREFIXES = ["/api/auth", "/api/storage"];
+const PUBLIC_API_PREFIXES = ["/api/auth"];
 
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;

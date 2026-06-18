@@ -19,11 +19,8 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { useAssets } from "@/hooks/use-assets";
+import { assetDisplayUrl, assetDownloadUrl } from "@/lib/storage/urls";
 import { PLATFORM_SPECS, type AssetSummary, type Script } from "@/types";
-
-function downloadUrl(url: string, name: string) {
-  return `/api/assets/download?url=${encodeURIComponent(url)}&name=${encodeURIComponent(name)}`;
-}
 
 function DownloadButton({
   url,
@@ -37,7 +34,7 @@ function DownloadButton({
   if (!url) return null;
   return (
     <Button asChild size="sm" variant="outline">
-      <a href={downloadUrl(url, name)}>
+      <a href={assetDownloadUrl(url, name)}>
         <Download className="h-4 w-4" /> {label}
       </a>
     </Button>
@@ -114,9 +111,9 @@ export function AssetLibrary({ projectId }: { projectId: string }) {
                 </CardHeader>
                 <CardContent>
                   <video
-                    src={asset.videoUrl}
+                    src={assetDisplayUrl(asset.videoUrl)}
                     controls
-                    poster={asset.thumbnailUrl}
+                    poster={assetDisplayUrl(asset.thumbnailUrl)}
                     className="aspect-video w-full rounded-lg border bg-black"
                   />
                 </CardContent>
@@ -141,7 +138,7 @@ export function AssetLibrary({ projectId }: { projectId: string }) {
                     <CardContent className="space-y-3">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img
-                        src={asset.thumbnailUrl}
+                        src={assetDisplayUrl(asset.thumbnailUrl)}
                         alt={`${asset.platform} thumbnail`}
                         className="w-full rounded-lg border"
                       />
@@ -177,7 +174,11 @@ export function AssetLibrary({ projectId }: { projectId: string }) {
                       />
                     </CardHeader>
                     <CardContent>
-                      <audio src={asset.audioUrl} controls className="w-full" />
+                      <audio
+                        src={assetDisplayUrl(asset.audioUrl)}
+                        controls
+                        className="w-full"
+                      />
                     </CardContent>
                   </Card>
                 ))}

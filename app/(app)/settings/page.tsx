@@ -106,6 +106,15 @@ export default function SettingsPage() {
                   : "Only required when STORAGE_DRIVER=blob."
               }
             />
+            <StatusRow
+              label="Blob access mode"
+              ok={env.storageDriver !== "blob" || flags.hasBlob}
+              detail={
+                env.storageDriver === "blob"
+                  ? `BLOB_ACCESS=${env.blobAccess} — must match your Vercel Blob store (private or public).`
+                  : "Only relevant when STORAGE_DRIVER=blob."
+              }
+            />
           </CardContent>
         </Card>
 
