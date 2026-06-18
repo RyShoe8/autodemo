@@ -96,23 +96,18 @@ function SceneMedia({
   index: number;
 }) {
   const frame = useCurrentFrame();
-  const { width, height, fps } = useVideoConfig();
+  const { width, height } = useVideoConfig();
   const duration = scene.durationInFrames;
   const isPortrait = height > width;
   const transition = scene.transition ?? transitionForIndex(index);
   const { opacity, transform } = transitionStyle(transition, frame, duration);
 
-  const hasVideo =
-    scene.videoAssetName &&
-    scene.videoStartMs !== undefined &&
-    scene.videoEndMs !== undefined;
+  const hasVideo = Boolean(scene.videoAssetName);
 
   if (hasVideo) {
-    const startFrame = Math.round((scene.videoStartMs! / 1000) * fps);
     return (
       <OffthreadVideo
         src={staticFile(scene.videoAssetName!)}
-        startFrom={startFrame}
         style={{
           width: "100%",
           height: "100%",

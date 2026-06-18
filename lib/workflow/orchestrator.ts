@@ -13,7 +13,8 @@ import { generateVoice } from "@/lib/video/voice";
 import { generateCaptions } from "@/lib/video/captions";
 import { generateThumbnail } from "@/lib/video/thumbnail";
 import { resolveVideoToLocalFile } from "@/lib/video/media-resolve";
-import { stageVideoInRemotionBundle } from "@/lib/video/remotion-assets";
+import { stageClipsInRemotionBundle } from "@/lib/video/remotion-assets";
+import { sliceSessionClips } from "@/lib/video/session-clips";
 import {
   buildBaseProps,
   ensureBundle,
@@ -255,24 +256,48 @@ async function runProduce(
   }
 
   const bundleDir = await ensureBundle(ctx);
-  let videoAssetName: string | undefined;
+  let sceneClipAssets: Map<number, string> | undefined;
   if (rawVideoPath) {
-    const staged = await stageVideoInRemotionBundle(
-      bundleDir,
+    const clipInputs = recording.scenes
+      .map((scene, index) => ({
+        index,
+        videoStartMs: scene.videoStartMs,
+        videoEndMs: scene.videoEndMs,
+      }))
+      .filter(
+        (s): s is { index: number; videoStartMs: number; videoEndMs: number } =>
+          s.videoStartMs !== undefined && s.videoEndMs !== undefined,
+      );
+
+    const clipsDir = path.join(masterDir, "clips");
+    const localClips = await sliceSessionClips(
       rawVideoPath,
-      `session-${ctx.jobId}.mp4`,
+      clipInputs,
+      clipsDir,
+      ctx.jobId,
     );
-    videoAssetName = staged.assetName;
-    await ctx.log(
-      `Staged screen recording at ${staged.staticUrl} (${Math.round(staged.sizeInBytes / 1024)} KB).`,
+    await ctx.log(`Sliced ${localClips.size} scene clips from screen recording.`);
+
+    const staged = await stageClipsInRemotionBundle(
+      bundleDir,
+      localClips,
+      ctx.jobId,
     );
+    sceneClipAssets = new Map(
+      staged.map((c) => [c.sceneIndex, c.assetName]),
+    );
+    for (const clip of staged) {
+      await ctx.log(
+        `Staged scene ${clip.sceneIndex + 1} clip at ${clip.staticUrl} (${Math.round(clip.sizeInBytes / 1024)} KB).`,
+      );
+    }
   }
 
   const baseProps = await buildBaseProps({
     script,
     scenes: recording.scenes,
     voice,
-    videoAssetName,
+    sceneClipAssets,
     branding: {
       logoUrl: project.logoUrl,
       brandColor: project.brandColor ?? "#38bdf8",

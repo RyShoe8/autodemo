@@ -28,8 +28,8 @@ export interface RenderBuildInput {
   script: Script;
   scenes: CapturedScene[];
   voice: VoiceResult;
-  /** Filename staged in the bundle public folder (resolved via staticFile in composition). */
-  videoAssetName?: string;
+  /** Per-scene clip filenames staged in the bundle public folder. */
+  sceneClipAssets?: Map<number, string>;
   branding: RenderBranding;
   reporter: Reporter;
 }
@@ -54,7 +54,7 @@ export async function ensureBundle(reporter: Reporter): Promise<string> {
 export async function buildBaseProps(
   input: RenderBuildInput,
 ): Promise<DemoVideoProps> {
-  const { script, scenes, voice, videoAssetName, branding } = input;
+  const { script, scenes, voice, sceneClipAssets, branding } = input;
   const segments = voice.segments;
   const introFrames = Math.round((segments[0]?.durationSeconds ?? 5) * RENDER_FPS);
   const outroFrames = Math.round(
@@ -94,9 +94,7 @@ export async function buildBaseProps(
         RENDER_FPS,
         Math.round(clipDuration * RENDER_FPS),
       ),
-      videoAssetName,
-      videoStartMs: scene.videoStartMs,
-      videoEndMs: scene.videoEndMs,
+      videoAssetName: sceneClipAssets?.get(i),
       transition: transitionForIndex(i),
     });
   }
@@ -156,6 +154,9 @@ export async function renderToFile(
     inputProps: props,
   });
 
+  const verbose = process.env.REMOTION_VERBOSE === "true";
+  let lastLoggedPercent = -1;
+
   await renderMedia({
     composition: {
       ...composition,
@@ -169,9 +170,15 @@ export async function renderToFile(
     codec: "h264",
     outputLocation: outputPath,
     inputProps: props,
-    verbose: true,
-    logLevel: "verbose",
-    onProgress: () => {},
+    verbose,
+    logLevel: verbose ? "verbose" : "info",
+    onProgress: ({ progress }) => {
+      const percent = Math.round(progress * 100);
+      if (percent >= lastLoggedPercent + 5 || percent === 100) {
+        lastLoggedPercent = percent;
+        void reporter.log(`Render progress: ${percent}%`);
+      }
+    },
   });
 }
 
