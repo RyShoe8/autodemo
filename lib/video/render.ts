@@ -249,7 +249,9 @@ export async function renderToFile(
       logLevel: verbose ? "verbose" : "info",
       cancelSignal,
       timeoutInMilliseconds: env.remotionTimeoutMs,
-      concurrency: env.remotionConcurrency,
+      ...(env.remotionConcurrency !== undefined
+        ? { concurrency: env.remotionConcurrency }
+        : {}),
       x264Preset: "veryfast",
       crf: 18,
       onProgress: ({ progress }) => {
@@ -320,7 +322,9 @@ export async function renderBumperToFile(
     verbose: true,
     logLevel: "verbose",
     timeoutInMilliseconds: env.remotionTimeoutMs,
-    concurrency: env.remotionConcurrency,
+    ...(env.remotionConcurrency !== undefined
+      ? { concurrency: env.remotionConcurrency }
+      : {}),
     x264Preset: "veryfast",
     crf: 18,
     onProgress: () => {},
