@@ -3,6 +3,7 @@ import { isBlobStorageError } from "@/lib/storage/blob-utils";
 import { storage } from "@/lib/storage";
 import { placeholderScreenshotSVG } from "@/lib/media/placeholder";
 import { login } from "@/lib/playwright/discovery";
+import { navigateAndWait } from "@/lib/playwright/spa";
 import type { Reporter } from "@/lib/workflow/context";
 import type {
   ApplicationMap,
@@ -40,10 +41,7 @@ export async function captureStep(
         const target = step.url
           ? new URL(step.url, origin).toString()
           : origin;
-        await page.goto(target, {
-          waitUntil: "domcontentloaded",
-          timeout: 20000,
-        });
+        await navigateAndWait(page, target);
         break;
       }
       case "click": {
@@ -178,7 +176,7 @@ export async function executeWorkflow(
     const page = await context.newPage();
     const origin = new URL(url).origin;
 
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await navigateAndWait(page, url);
     await login(page, email, password, reporter);
 
     const scenes: CapturedScene[] = [];

@@ -2,6 +2,12 @@ import type { Browser, Page } from "playwright";
 import { storage } from "@/lib/storage";
 import { isBlobStorageError } from "@/lib/storage/blob-utils";
 import { placeholderScreenshotSVG } from "@/lib/media/placeholder";
+import {
+  AUTH_ROUTE_PATTERN,
+  navigateAndWait,
+  resolveLoginPage,
+  waitForAppReady,
+} from "@/lib/playwright/spa";
 import type { ApplicationMap, DiscoveredPage } from "@/types";
 import type { Reporter as PipelineReporter } from "@/lib/workflow/context";
 
@@ -34,12 +40,14 @@ export async function login(
     return false;
   }
   try {
-    const passwordField = page.locator('input[type="password"]').first();
-    const hasPassword = (await passwordField.count()) > 0;
-    if (!hasPassword) {
+    const origin = new URL(page.url()).origin;
+    const found = await resolveLoginPage(page, origin, reporter);
+    if (!found) {
       await reporter.log("No login form detected — continuing unauthenticated.");
       return false;
     }
+
+    const passwordField = page.locator('input[type="password"]').first();
     const emailField = page
       .locator(
         'input[type="email"], input[name="email"], input[name="username"], input[type="text"]',
@@ -52,19 +60,19 @@ export async function login(
     await reporter.log("Submitting login form…");
     const submit = page
       .locator(
-        'button[type="submit"], input[type="submit"], button:has-text("Sign in"), button:has-text("Log in")',
+        'button[type="submit"], input[type="submit"], button:has-text("Sign in"), button:has-text("Log in"), button:has-text("Continue")',
       )
       .first();
     if ((await submit.count()) > 0) {
       await Promise.all([
-        page.waitForLoadState("networkidle").catch(() => {}),
+        waitForAppReady(page),
         submit.click().catch(() => {}),
       ]);
     } else {
       await passwordField.press("Enter");
-      await page.waitForLoadState("networkidle").catch(() => {});
+      await waitForAppReady(page);
     }
-    await reporter.log("Login submitted.");
+    await reporter.log(`Login submitted (now at ${page.url()}).`);
     return true;
   } catch (err) {
     await reporter.log(
@@ -74,13 +82,22 @@ export async function login(
   }
 }
 
+interface NavLink {
+  label: string;
+  href: string;
+}
+
 /** Collect primary navigation link labels + hrefs from the current page. */
-export async function crawlNavigation(page: Page): Promise<
-  { label: string; href: string }[]
-> {
-  const links = await page.evaluate((selectors) => {
+export async function crawlNavigation(
+  page: Page,
+  origin: string,
+  reporter?: PipelineReporter,
+): Promise<NavLink[]> {
+  await waitForAppReady(page);
+
+  const primary = await page.evaluate((selectors) => {
     const seen = new Set<string>();
-    const out: { label: string; href: string }[] = [];
+    const out: NavLink[] = [];
     for (const sel of selectors) {
       document.querySelectorAll<HTMLAnchorElement>(sel).forEach((a) => {
         const label = (a.textContent || "").trim().replace(/\s+/g, " ");
@@ -93,7 +110,74 @@ export async function crawlNavigation(page: Page): Promise<
     }
     return out;
   }, NAV_SELECTORS);
-  return links.slice(0, 12);
+
+  if (primary.length >= 3) {
+    await reporter?.log(
+      `Navigation: ${primary.length} links from primary selectors.`,
+    );
+    return primary.slice(0, 12);
+  }
+
+  const fallback = await page.evaluate((pageOrigin) => {
+    const authPattern =
+      /\/(login|sign-?in|register|sign-?up|logout)(\/|$|\?)/i;
+    const byHref = new Map<string, NavLink & { score: number; isAuth: boolean }>();
+
+    document.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
+      const href = a.href;
+      if (!href.startsWith(pageOrigin)) return;
+      if (href.startsWith("mailto:") || href.startsWith("tel:")) return;
+      const label = (a.textContent || "").trim().replace(/\s+/g, " ");
+      if (label.length < 2 || label.length > 60) return;
+
+      let score = 0;
+      let el: Element | null = a;
+      while (el) {
+        if (
+          el.matches("nav, header, aside, [role=navigation], main")
+        ) {
+          score += 10;
+        }
+        el = el.parentElement;
+      }
+
+      let pathname = href;
+      try {
+        pathname = new URL(href).pathname;
+      } catch {
+        /* keep href */
+      }
+      const isAuth = authPattern.test(pathname);
+      const entry = {
+        label: label.slice(0, 60),
+        href,
+        score,
+        isAuth,
+      };
+      const prev = byHref.get(href);
+      if (!prev || entry.score > prev.score) {
+        byHref.set(href, entry);
+      }
+    });
+
+    return Array.from(byHref.values()).sort((a, b) => b.score - a.score);
+  }, origin);
+
+  const seen = new Set(primary.map((l) => l.href));
+  const merged: NavLink[] = [...primary];
+  for (const link of fallback) {
+    if (seen.has(link.href)) continue;
+    seen.add(link.href);
+    merged.push({ label: link.label, href: link.href });
+  }
+
+  const nonAuth = merged.filter((l) => !AUTH_ROUTE_PATTERN.test(l.href));
+  const result = (nonAuth.length > 0 ? nonAuth : merged).slice(0, 12);
+
+  await reporter?.log(
+    `Navigation: ${primary.length} primary, ${fallback.length} fallback, ${result.length} used.`,
+  );
+  return result;
 }
 
 /** Capture a screenshot of the current page and persist it to storage. */
@@ -188,6 +272,7 @@ export async function discoverApplication(
 ): Promise<ApplicationMap> {
   const { reporter, projectId, url, email, password } = opts;
   const maxPages = opts.maxPages ?? 6;
+  const origin = new URL(url).origin;
 
   let browser: Browser | null = null;
   try {
@@ -201,18 +286,18 @@ export async function discoverApplication(
     const page = await context.newPage();
 
     await reporter.log(`Navigating to ${url}`);
-    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 30000 });
+    await navigateAndWait(page, url);
 
     await login(page, email, password, reporter);
+    await waitForAppReady(page);
 
-    const navLinks = await crawlNavigation(page);
+    const navLinks = await crawlNavigation(page, origin, reporter);
     await reporter.log(`Found ${navLinks.length} navigation links.`);
 
     const pages: DiscoveredPage[] = [];
     const screenshots: string[] = [];
     const uiText = new Set<string>();
 
-    // Capture the landing page.
     const homeShot = await captureScreenshots(page, projectId, 0);
     const homeText = await extractVisibleText(page);
     homeText.forEach((t) => uiText.add(t));
@@ -223,16 +308,12 @@ export async function discoverApplication(
     });
     screenshots.push(homeShot);
 
-    const origin = new URL(url).origin;
     let captured = 1;
     for (const link of navLinks) {
       if (captured >= maxPages) break;
       try {
         if (!link.href.startsWith(origin)) continue;
-        await page.goto(link.href, {
-          waitUntil: "domcontentloaded",
-          timeout: 20000,
-        });
+        await navigateAndWait(page, link.href);
         const shot = await captureScreenshots(page, projectId, captured);
         const text = await extractVisibleText(page);
         text.forEach((t) => uiText.add(t));
