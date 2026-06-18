@@ -46,6 +46,8 @@ export const env = {
   remotionConcurrency: read("REMOTION_CONCURRENCY")
     ? Number(read("REMOTION_CONCURRENCY"))
     : undefined,
+  remotionOffthreadCacheBytes:
+    Number(read("REMOTION_OFFTHREAD_CACHE_MB") ?? "256") * 1024 * 1024,
 
   nodeEnv: read("NODE_ENV") ?? "development",
 };

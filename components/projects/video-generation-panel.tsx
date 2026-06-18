@@ -157,8 +157,9 @@ export function VideoGenerationPanel({
 
             {isActive && (
               <p className="text-sm text-muted-foreground">
-                Rendering can take several minutes. Progress updates appear in
-                the activity log.
+                On a small worker, master render can take 20–40 minutes. Progress
+                updates every ~5% in the activity log. Do not cancel unless
+                there are no log updates for 15+ minutes.
               </p>
             )}
 

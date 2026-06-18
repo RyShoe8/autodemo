@@ -285,6 +285,7 @@ async function runProduce(
 
   const bundleDir = await ensureBundle(ctx);
   let sceneClipAssets: Map<number, string> | undefined;
+  let clipsDir: string | undefined;
   if (rawVideoPath) {
     const clipInputs = recording.scenes
       .map((scene, index) => {
@@ -308,7 +309,7 @@ async function runProduce(
           s.videoStartMs !== undefined && s.videoEndMs !== undefined,
       );
 
-    const clipsDir = path.join(masterDir, "clips");
+    clipsDir = path.join(masterDir, "clips");
     const localClips = await sliceSessionClips(
       rawVideoPath,
       clipInputs,
@@ -348,6 +349,13 @@ async function runProduce(
     },
     reporter: ctx,
   });
+
+  if (rawVideoPath) {
+    await fs.rm(rawVideoPath, { force: true }).catch(() => {});
+  }
+  if (clipsDir) {
+    await fs.rm(clipsDir, { recursive: true, force: true }).catch(() => {});
+  }
 
   const masterPath = path.join(masterDir, "master.mp4");
   await ctx.log("Rendering 16:9 body master (no inline bumper)…");

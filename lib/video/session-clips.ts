@@ -11,7 +11,7 @@ export interface SceneClipInput {
   maxDurationSec?: number;
 }
 
-const SLICE_CONCURRENCY = 4;
+const SLICE_CONCURRENCY = Number(process.env.FFMPEG_SLICE_CONCURRENCY ?? "1");
 
 function ffmpegBin(): string {
   return process.env.FFMPEG_PATH || "ffmpeg";
