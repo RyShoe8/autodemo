@@ -3,11 +3,27 @@ import { db } from "@/lib/db";
 import { generateSchema } from "@/lib/validation/schemas";
 import { toJobDTO } from "@/lib/serialize";
 import { createLogger } from "@/lib/logger";
+import type { JobStatus } from "@/types";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const log = createLogger("api:generate");
+
+const ACTIVE_JOB_STATUSES: JobStatus[] = [
+  "queued",
+  "discovering",
+  "building_workflow",
+  "recording",
+  "generating_script",
+  "generating_audio",
+  "rendering",
+  "exporting",
+];
+
+function isActive(status: JobStatus): boolean {
+  return ACTIVE_JOB_STATUSES.includes(status);
+}
 
 export async function POST(req: NextRequest) {
   let body: unknown;
@@ -25,7 +41,7 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { projectId, type } = parsed.data;
+  const { projectId, videoId, type } = parsed.data;
 
   try {
     const project = await db.getProject(projectId);
@@ -33,32 +49,53 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "Project not found" }, { status: 404 });
     }
 
-    if (type === "produce" && (project.workflow ?? []).length === 0) {
-      return NextResponse.json(
-        { error: "Approve a workflow before recording" },
-        { status: 400 },
-      );
+    if (type === "build_workflow" || type === "produce") {
+      if (!videoId) {
+        return NextResponse.json(
+          { error: "videoId is required for this job type" },
+          { status: 400 },
+        );
+      }
+      const video = await db.getVideo(videoId);
+      if (!video || video.projectId !== projectId) {
+        return NextResponse.json({ error: "Video not found" }, { status: 404 });
+      }
+      if (type === "produce" && (video.workflow ?? []).length === 0) {
+        return NextResponse.json(
+          { error: "Approve a workflow before recording" },
+          { status: 400 },
+        );
+      }
+      const latestVideoJob = await db.getLatestJobByVideo(videoId);
+      if (latestVideoJob && isActive(latestVideoJob.status)) {
+        return NextResponse.json(
+          { error: "A job is already in progress for this video" },
+          { status: 409 },
+        );
+      }
     }
 
-    // Prevent duplicate concurrent runs.
-    const latest = await db.getLatestJobByProject(projectId);
-    if (
-      latest &&
-      latest.status !== "completed" &&
-      latest.status !== "failed" &&
-      latest.status !== "awaiting_approval"
-    ) {
-      return NextResponse.json(
-        { error: "A job is already in progress for this project" },
-        { status: 409 },
-      );
+    if (type === "discover" || type === "render_bumper") {
+      const latestProjectJob = await db.getLatestJobByProject(projectId);
+      if (latestProjectJob && isActive(latestProjectJob.status)) {
+        return NextResponse.json(
+          { error: "A job is already in progress for this project" },
+          { status: 409 },
+        );
+      }
     }
 
-    await db.updateProject(projectId, {
-      status: type === "discover" ? "discovering" : "recording",
-    });
+    if (type === "discover") {
+      await db.updateProject(projectId, { status: "discovering" });
+    } else if (type === "render_bumper") {
+      /* project status unchanged */
+    } else if (videoId) {
+      await db.updateVideo(videoId, {
+        status: type === "build_workflow" ? "building_workflow" : "recording",
+      });
+    }
 
-    const job = await db.createJob({ projectId, type });
+    const job = await db.createJob({ projectId, videoId, type });
     log.info(`Enqueued ${type} job ${job.id} for project ${projectId}`);
 
     return NextResponse.json({ job: toJobDTO(job) }, { status: 201 });

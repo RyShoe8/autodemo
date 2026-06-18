@@ -2,7 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { z } from "zod";
 import { db } from "@/lib/db";
 import { workflowSchema } from "@/lib/validation/schemas";
-import { toProjectDTO, toJobDTO } from "@/lib/serialize";
+import { toProjectVideoDTO, toJobDTO } from "@/lib/serialize";
 import { createLogger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -11,17 +11,16 @@ export const dynamic = "force-dynamic";
 const log = createLogger("api:workflows");
 
 const saveSchema = z.object({
-  projectId: z.string().min(1),
+  videoId: z.string().min(1),
   workflow: workflowSchema,
 });
 
 const actionSchema = z.object({
-  projectId: z.string().min(1),
+  videoId: z.string().min(1),
   action: z.enum(["approve", "regenerate"]),
   workflow: workflowSchema.optional(),
 });
 
-/** Persist an edited workflow. */
 export async function PUT(req: NextRequest) {
   let body: unknown;
   try {
@@ -36,16 +35,15 @@ export async function PUT(req: NextRequest) {
       { status: 422 },
     );
   }
-  const project = await db.updateProject(parsed.data.projectId, {
+  const video = await db.updateVideo(parsed.data.videoId, {
     workflow: parsed.data.workflow,
   });
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  if (!video) {
+    return NextResponse.json({ error: "Video not found" }, { status: 404 });
   }
-  return NextResponse.json({ project: toProjectDTO(project) });
+  return NextResponse.json({ video: toProjectVideoDTO(video) });
 }
 
-/** Approve (start recording) or regenerate (re-run discovery) a workflow. */
 export async function POST(req: NextRequest) {
   let body: unknown;
   try {
@@ -61,36 +59,42 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { projectId, action, workflow } = parsed.data;
-  const project = await db.getProject(projectId);
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
+  const { videoId, action, workflow } = parsed.data;
+  const video = await db.getVideo(videoId);
+  if (!video) {
+    return NextResponse.json({ error: "Video not found" }, { status: 404 });
   }
 
-  // Persist any inline workflow edits before acting.
   if (workflow) {
-    await db.updateProject(projectId, { workflow });
+    await db.updateVideo(videoId, { workflow });
   }
 
   try {
     if (action === "approve") {
-      const current = workflow ?? project.workflow ?? [];
+      const current = workflow ?? video.workflow ?? [];
       if (current.filter((s) => s.enabled).length === 0) {
         return NextResponse.json(
           { error: "Enable at least one step before approving" },
           { status: 400 },
         );
       }
-      await db.updateProject(projectId, { status: "recording" });
-      const job = await db.createJob({ projectId, type: "produce" });
-      log.info(`Approved workflow for ${projectId}; produce job ${job.id}`);
+      await db.updateVideo(videoId, { status: "recording" });
+      const job = await db.createJob({
+        projectId: video.projectId,
+        videoId,
+        type: "produce",
+      });
+      log.info(`Approved workflow for video ${videoId}; produce job ${job.id}`);
       return NextResponse.json({ job: toJobDTO(job) }, { status: 201 });
     }
 
-    // regenerate
-    await db.updateProject(projectId, { status: "discovering" });
-    const job = await db.createJob({ projectId, type: "discover" });
-    log.info(`Regenerating workflow for ${projectId}; discover job ${job.id}`);
+    await db.updateVideo(videoId, { status: "building_workflow" });
+    const job = await db.createJob({
+      projectId: video.projectId,
+      videoId,
+      type: "build_workflow",
+    });
+    log.info(`Regenerating workflow for video ${videoId}; job ${job.id}`);
     return NextResponse.json({ job: toJobDTO(job) }, { status: 201 });
   } catch (err) {
     log.error("Workflow action failed", err);

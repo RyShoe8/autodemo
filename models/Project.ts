@@ -1,52 +1,38 @@
 import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 
-const WorkflowStepSchema = new Schema(
-  {
-    id: { type: String, required: true },
-    title: { type: String, required: true },
-    description: { type: String, default: "" },
-    actionType: { type: String, required: true },
-    selector: { type: String },
-    url: { type: String },
-    value: { type: String },
-    enabled: { type: Boolean, default: true },
-    order: { type: Number, required: true },
-  },
-  { _id: false },
-);
-
 const ProjectSchema = new Schema(
   {
     name: { type: String, required: true },
     url: { type: String, required: true },
     loginEmail: { type: String, default: "" },
     encryptedPassword: { type: String, default: "" },
-    prompt: { type: String, required: true },
+    prompt: { type: String, default: "" },
     voiceOption: {
       type: String,
       enum: ["openai_tts", "browser_speech", "elevenlabs", "no_audio"],
       default: "openai_tts",
     },
-    platforms: {
-      type: [String],
-      default: [],
-    },
-    workflow: { type: [WorkflowStepSchema], default: [] },
+    platforms: { type: [String], default: [] },
+    workflow: { type: Schema.Types.Mixed, default: [] },
     applicationMap: { type: Schema.Types.Mixed },
     logoUrl: { type: String },
     brandColor: { type: String, default: "#38bdf8" },
     bumperEnabled: { type: Boolean, default: true },
     bumperDurationSeconds: { type: Number, default: 4, min: 2, max: 8 },
+    bumperUrl: { type: String },
+    bumperTitle: { type: String },
+    bumperTagline: { type: String },
     status: {
       type: String,
       enum: [
         "draft",
         "discovering",
+        "ready",
+        "failed",
         "awaiting_approval",
         "recording",
         "rendering",
         "completed",
-        "failed",
       ],
       default: "draft",
     },

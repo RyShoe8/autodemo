@@ -10,6 +10,10 @@ import {
   type RemotionScene,
 } from "@/lib/remotion/types";
 import { transitionForIndex } from "@/lib/remotion/transitions";
+import {
+  BUMPER_COMPOSITION_ID,
+  type BumperVideoProps,
+} from "@/lib/remotion/BumperVideo";
 
 export const RENDER_FPS = 30;
 
@@ -155,6 +159,60 @@ export async function renderToFile(
     composition: {
       ...composition,
       durationInFrames: computeDurationInFrames(props),
+      width: props.width,
+      height: props.height,
+      fps: props.fps,
+    },
+    serveUrl,
+    codec: "h264",
+    outputLocation: outputPath,
+    inputProps: props,
+    onProgress: () => {},
+  });
+}
+
+export interface RenderBumperInput {
+  title: string;
+  tagline?: string;
+  logoUrl?: string;
+  brandColor: string;
+  durationSeconds: number;
+  reporter: Reporter;
+}
+
+export async function renderBumperToFile(
+  input: RenderBumperInput,
+  outputPath: string,
+): Promise<void> {
+  const { selectComposition, renderMedia } = await import("@remotion/renderer");
+
+  const durationInFrames = Math.round(input.durationSeconds * RENDER_FPS);
+  const logoSrc = input.logoUrl
+    ? await toDataUri(input.logoUrl)
+    : undefined;
+
+  const props: BumperVideoProps = {
+    title: input.title,
+    tagline: input.tagline ?? "",
+    logoSrc,
+    brandColor: input.brandColor,
+    durationInFrames,
+    width: 1920,
+    height: 1080,
+    fps: RENDER_FPS,
+  };
+
+  const serveUrl = await ensureBundle(input.reporter);
+  const composition = await selectComposition({
+    serveUrl,
+    id: BUMPER_COMPOSITION_ID,
+    inputProps: props,
+  });
+
+  await renderMedia({
+    composition: {
+      ...composition,
+      durationInFrames: props.durationInFrames,
       width: props.width,
       height: props.height,
       fps: props.fps,

@@ -117,10 +117,12 @@ function SortableRow({
 
 export function WorkflowEditor({
   projectId,
+  videoId,
   initialWorkflow,
   bumperEnabled = false,
 }: {
   projectId: string;
+  videoId: string;
   initialWorkflow: WorkflowStep[];
   bumperEnabled?: boolean;
 }) {
@@ -181,7 +183,7 @@ export function WorkflowEditor({
   async function save() {
     setSaving(true);
     try {
-      await api.put("/api/workflows", { projectId, workflow: withOrder(steps) });
+      await api.put("/api/workflows", { videoId, workflow: withOrder(steps) });
       toast.success("Workflow saved");
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not save");
@@ -194,12 +196,12 @@ export function WorkflowEditor({
     setApproving(true);
     try {
       await api.post("/api/workflows", {
-        projectId,
+        videoId,
         action: "approve",
         workflow: withOrder(steps),
       });
       toast.success("Workflow approved — recording started");
-      router.push(`/projects/${projectId}`);
+      router.push(`/projects/${projectId}/videos/${videoId}`);
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not approve");
@@ -210,9 +212,9 @@ export function WorkflowEditor({
   async function regenerate() {
     setRegenerating(true);
     try {
-      await api.post("/api/workflows", { projectId, action: "regenerate" });
+      await api.post("/api/workflows", { videoId, action: "regenerate" });
       toast.success("Regenerating workflow…");
-      router.push(`/projects/${projectId}`);
+      router.push(`/projects/${projectId}/videos/${videoId}`);
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not regenerate");

@@ -43,14 +43,10 @@ import { ProjectStatusBadge } from "@/components/status/status-badge";
 import { useProjects } from "@/hooks/use-projects";
 import { api } from "@/lib/api-client";
 import { formatRelative } from "@/lib/utils";
-import { VOICE_LABELS, type ProjectDTO, type ProjectStatus } from "@/types";
+import type { ProjectDTO, ProjectStatus } from "@/types";
 
 function discoveryActionLabel(status: ProjectStatus): string {
-  if (
-    status === "awaiting_approval" ||
-    status === "completed" ||
-    status === "failed"
-  ) {
+  if (status === "ready" || status === "failed" || status === "completed") {
     return "Re-run discovery";
   }
   return "Start discovery";
@@ -126,7 +122,7 @@ export function ProjectsTable() {
             <TableRow>
               <TableHead>Name</TableHead>
               <TableHead>Status</TableHead>
-              <TableHead className="hidden md:table-cell">Voice</TableHead>
+              <TableHead className="hidden md:table-cell">Bumper</TableHead>
               <TableHead className="hidden sm:table-cell">Created</TableHead>
               <TableHead className="w-12 text-right">Actions</TableHead>
             </TableRow>
@@ -151,7 +147,11 @@ export function ProjectsTable() {
                   <ProjectStatusBadge status={project.status} />
                 </TableCell>
                 <TableCell className="hidden text-sm text-muted-foreground md:table-cell">
-                  {VOICE_LABELS[project.voiceOption]}
+                  {project.bumperEnabled
+                    ? project.bumperUrl
+                      ? "Ready"
+                      : "Not generated"
+                    : "Off"}
                 </TableCell>
                 <TableCell className="hidden text-sm text-muted-foreground sm:table-cell">
                   {formatRelative(project.createdAt)}

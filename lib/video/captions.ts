@@ -12,8 +12,11 @@ function formatTimestamp(totalSeconds: number): string {
 }
 
 /** Build an SRT string from narration segments and their durations. */
-export function buildSrt(segments: AudioSegment[]): string {
-  let cursor = 0;
+export function buildSrt(
+  segments: AudioSegment[],
+  offsetSeconds = 0,
+): string {
+  let cursor = offsetSeconds;
   const blocks: string[] = [];
   segments.forEach((segment, i) => {
     const start = cursor;
@@ -28,13 +31,16 @@ export function buildSrt(segments: AudioSegment[]): string {
 
 export async function generateCaptions(opts: {
   projectId: string;
+  videoId: string;
   segments: AudioSegment[];
+  bumperOffsetSeconds?: number;
   reporter: Reporter;
 }): Promise<string> {
-  const { projectId, segments, reporter } = opts;
-  const srt = buildSrt(segments);
+  const { projectId, videoId, segments, bumperOffsetSeconds = 0, reporter } =
+    opts;
+  const srt = buildSrt(segments, bumperOffsetSeconds);
   const { url } = await storage.save(
-    `projects/${projectId}/captions/captions.srt`,
+    `projects/${projectId}/videos/${videoId}/captions/captions.srt`,
     srt,
     "application/x-subrip",
   );

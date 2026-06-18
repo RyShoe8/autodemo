@@ -80,14 +80,13 @@ export async function PATCH(
     if (data.name !== undefined) patch.name = data.name;
     if (data.url !== undefined) patch.url = data.url;
     if (data.loginEmail !== undefined) patch.loginEmail = data.loginEmail;
-    if (data.prompt !== undefined) patch.prompt = data.prompt;
-    if (data.voiceOption !== undefined) patch.voiceOption = data.voiceOption;
-    if (data.platforms !== undefined) patch.platforms = data.platforms;
     if (data.brandColor !== undefined) patch.brandColor = data.brandColor;
     if (data.bumperEnabled !== undefined) patch.bumperEnabled = data.bumperEnabled;
     if (data.bumperDurationSeconds !== undefined) {
       patch.bumperDurationSeconds = data.bumperDurationSeconds;
     }
+    if (data.bumperTitle !== undefined) patch.bumperTitle = data.bumperTitle;
+    if (data.bumperTagline !== undefined) patch.bumperTagline = data.bumperTagline;
 
     if (data.loginPassword && data.loginPassword.length > 0) {
       patch.encryptedPassword = encrypt(data.loginPassword);
@@ -107,9 +106,8 @@ export async function PATCH(
         uiText: [],
       };
       if (
-        existing.status === "completed" ||
-        existing.status === "failed" ||
-        existing.status === "awaiting_approval"
+        existing.status === "ready" ||
+        existing.status === "failed"
       ) {
         patch.status = "draft";
       }

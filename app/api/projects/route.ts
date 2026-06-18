@@ -46,12 +46,11 @@ export async function POST(req: NextRequest) {
       url: data.url,
       loginEmail: data.loginEmail,
       encryptedPassword: data.loginPassword ? encrypt(data.loginPassword) : "",
-      prompt: data.prompt,
-      voiceOption: data.voiceOption,
-      platforms: data.platforms,
       brandColor: data.brandColor,
       bumperEnabled: data.bumperEnabled,
       bumperDurationSeconds: data.bumperDurationSeconds,
+      bumperTitle: data.bumperTitle ?? data.name,
+      bumperTagline: data.bumperTagline,
     });
     return NextResponse.json({ project: toProjectDTO(project) }, { status: 201 });
   } catch (err) {

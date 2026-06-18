@@ -7,12 +7,15 @@ export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   const projectId = req.nextUrl.searchParams.get("projectId");
-  if (!projectId) {
+  const videoId = req.nextUrl.searchParams.get("videoId");
+  if (!projectId && !videoId) {
     return NextResponse.json(
-      { error: "projectId query param is required" },
+      { error: "projectId or videoId query param is required" },
       { status: 400 },
     );
   }
-  const assets = await db.listAssetsByProject(projectId);
+  const assets = videoId
+    ? await db.listAssetsByVideo(videoId)
+    : await db.listAssetsByProject(projectId!);
   return NextResponse.json({ assets: assets.map(toAssetDTO) });
 }

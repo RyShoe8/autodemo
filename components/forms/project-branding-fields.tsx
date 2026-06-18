@@ -2,7 +2,7 @@
 
 import { useRef, useState } from "react";
 import Image from "next/image";
-import { Loader2, Upload } from "lucide-react";
+import { Loader2, Sparkles, Upload } from "lucide-react";
 import {
   type Control,
   Controller,
@@ -22,11 +22,15 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { api } from "@/lib/api-client";
+import { assetDisplayUrl } from "@/lib/storage/urls";
 
 type BrandingFormFields = {
   brandColor?: string;
   bumperEnabled?: boolean;
   bumperDurationSeconds?: number;
+  bumperTitle?: string;
+  bumperTagline?: string;
 };
 
 export function ProjectBrandingFields<T extends BrandingFormFields>({
@@ -35,6 +39,7 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
   errors,
   projectId,
   initialLogoUrl,
+  initialBumperUrl,
   onLogoChange,
 }: {
   control: Control<T>;
@@ -42,11 +47,14 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
   errors: FieldErrors<T>;
   projectId?: string;
   initialLogoUrl?: string;
+  initialBumperUrl?: string;
   onLogoChange?: (url: string) => void;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [logoUrl, setLogoUrl] = useState(initialLogoUrl);
+  const [bumperUrl, setBumperUrl] = useState(initialBumperUrl);
   const [uploading, setUploading] = useState(false);
+  const [generating, setGenerating] = useState(false);
 
   async function uploadLogo(file: File) {
     if (!projectId) return;
@@ -73,13 +81,28 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
     }
   }
 
+  async function generateBumper() {
+    if (!projectId) return;
+    setGenerating(true);
+    try {
+      await api.post("/api/generate", {
+        projectId,
+        type: "render_bumper",
+      });
+      toast.success("Bumper generation started");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not start bumper job");
+      setGenerating(false);
+    }
+  }
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>Branding &amp; intro bumper</CardTitle>
         <CardDescription>
-          Logo and colors appear on the branded intro before your screencast.
-          Discovery can auto-fetch a favicon when no logo is uploaded.
+          Generate the bumper once per project. It is prepended to every video
+          export when enabled.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -138,6 +161,17 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
           </div>
         </div>
 
+        <Field label="Bumper title" error={errors.bumperTitle?.message as string | undefined}>
+          <Input placeholder="Acme Analytics" {...register("bumperTitle" as Path<T>)} />
+        </Field>
+
+        <Field label="Bumper tagline" error={errors.bumperTagline?.message as string | undefined}>
+          <Input
+            placeholder="Optional subtitle on the intro bumper"
+            {...register("bumperTagline" as Path<T>)}
+          />
+        </Field>
+
         <Field label="Brand color" error={errors.brandColor?.message as string | undefined}>
           <div className="flex items-center gap-3">
             <Input
@@ -163,9 +197,9 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
                 onCheckedChange={(v) => field.onChange(v === true)}
               />
               <div className="space-y-0.5">
-                <p className="text-sm font-medium">Intro bumper</p>
+                <p className="text-sm font-medium">Use bumper on exports</p>
                 <p className="text-xs text-muted-foreground">
-                  Play a branded opener before the screencast (Remotion only).
+                  Prepend the generated bumper to every video export.
                 </p>
               </div>
             </label>
@@ -197,6 +231,41 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
             )}
           />
         </Field>
+
+        {projectId && (
+          <div className="flex flex-wrap items-center gap-3 rounded-lg border p-3">
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium">Project bumper</p>
+              <p className="text-xs text-muted-foreground">
+                {bumperUrl
+                  ? "Bumper generated — re-run after changing logo or colors."
+                  : "Not generated yet."}
+              </p>
+            </div>
+            {bumperUrl && (
+              <video
+                src={assetDisplayUrl(bumperUrl)}
+                className="h-16 w-28 rounded border object-cover"
+                muted
+                playsInline
+              />
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={generating}
+              onClick={() => void generateBumper()}
+            >
+              {generating ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Sparkles className="h-4 w-4" />
+              )}
+              Generate bumper
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -218,18 +287,4 @@ function Field({
       {error && <p className="text-xs text-destructive">{error}</p>}
     </div>
   );
-}
-
-/** Upload logo for a newly created project (create form post-submit). */
-export async function uploadProjectLogo(projectId: string, file: File) {
-  const form = new FormData();
-  form.append("logo", file);
-  const res = await fetch(`/api/projects/${projectId}/logo`, {
-    method: "POST",
-    body: form,
-  });
-  if (!res.ok) {
-    const body = (await res.json().catch(() => ({}))) as { error?: string };
-    throw new Error(body.error ?? "Logo upload failed");
-  }
 }

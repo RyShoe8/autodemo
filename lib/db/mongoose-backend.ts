@@ -1,5 +1,6 @@
 import { connectMongo } from "@/lib/mongodb";
 import { ProjectModel } from "@/models/Project";
+import { ProjectVideoModel } from "@/models/ProjectVideo";
 import { JobModel } from "@/models/Job";
 import { VideoAssetModel } from "@/models/VideoAsset";
 import type {
@@ -7,14 +8,17 @@ import type {
   CreateAssetInput,
   CreateJobInput,
   CreateProjectInput,
+  CreateProjectVideoInput,
   DbBackend,
   JobRecord,
   ProjectRecord,
+  ProjectVideoRecord,
 } from "@/lib/db/types";
 import { firstStatusForType } from "@/lib/db/types";
 import type {
   Platform,
   ProjectStatus,
+  VideoStatus,
   VoiceOption,
   WorkflowStep,
   ApplicationMap,
@@ -29,17 +33,35 @@ function mapProject(doc: any): ProjectRecord {
     url: doc.url,
     loginEmail: doc.loginEmail ?? "",
     encryptedPassword: doc.encryptedPassword ?? "",
-    prompt: doc.prompt,
-    voiceOption: doc.voiceOption as VoiceOption,
-    platforms: (doc.platforms ?? []) as Platform[],
-    workflow: (doc.workflow ?? []) as WorkflowStep[],
     applicationMap: doc.applicationMap as ApplicationMap | undefined,
     logoUrl: doc.logoUrl ?? undefined,
     brandColor: doc.brandColor ?? "#38bdf8",
     bumperEnabled: doc.bumperEnabled !== false,
     bumperDurationSeconds: doc.bumperDurationSeconds ?? 4,
+    bumperUrl: doc.bumperUrl ?? undefined,
+    bumperTitle: doc.bumperTitle ?? doc.name,
+    bumperTagline: doc.bumperTagline ?? undefined,
     status: doc.status as ProjectStatus,
     createdAt: doc.createdAt ?? new Date(),
+    prompt: doc.prompt,
+    voiceOption: doc.voiceOption as VoiceOption | undefined,
+    platforms: (doc.platforms ?? []) as Platform[],
+    workflow: (doc.workflow ?? []) as WorkflowStep[],
+  };
+}
+
+function mapVideo(doc: any): ProjectVideoRecord {
+  return {
+    id: String(doc._id),
+    projectId: String(doc.projectId),
+    name: doc.name,
+    prompt: doc.prompt,
+    voiceOption: doc.voiceOption as VoiceOption,
+    platforms: (doc.platforms ?? []) as Platform[],
+    workflow: (doc.workflow ?? []) as WorkflowStep[],
+    status: doc.status as VideoStatus,
+    createdAt: doc.createdAt ?? new Date(),
+    updatedAt: doc.updatedAt ?? doc.createdAt ?? new Date(),
   };
 }
 
@@ -47,6 +69,7 @@ function mapJob(doc: any): JobRecord {
   return {
     id: String(doc._id),
     projectId: String(doc.projectId),
+    videoId: doc.videoId ? String(doc.videoId) : undefined,
     type: doc.type,
     status: doc.status,
     progress: doc.progress ?? 0,
@@ -63,6 +86,7 @@ function mapAsset(doc: any): AssetRecord {
   return {
     id: String(doc._id),
     projectId: String(doc.projectId),
+    videoId: doc.videoId ? String(doc.videoId) : "",
     platform: doc.platform,
     videoUrl: doc.videoUrl,
     audioUrl: doc.audioUrl,
@@ -78,7 +102,7 @@ export class MongooseBackend implements DbBackend {
     await connectMongo();
     const doc = await ProjectModel.create({
       ...input,
-      workflow: [],
+      bumperTitle: input.bumperTitle ?? input.name,
       status: "draft",
     });
     return mapProject(doc.toObject());
@@ -112,6 +136,54 @@ export class MongooseBackend implements DbBackend {
     const res = await ProjectModel.findByIdAndDelete(id);
     await JobModel.deleteMany({ projectId: id });
     await VideoAssetModel.deleteMany({ projectId: id });
+    await ProjectVideoModel.deleteMany({ projectId: id });
+    return Boolean(res);
+  }
+
+  async createVideo(input: CreateProjectVideoInput): Promise<ProjectVideoRecord> {
+    await connectMongo();
+    const doc = await ProjectVideoModel.create({
+      projectId: input.projectId,
+      name: input.name,
+      prompt: input.prompt,
+      voiceOption: input.voiceOption,
+      platforms: input.platforms,
+      workflow: input.workflow ?? [],
+      status: input.status ?? "draft",
+    });
+    return mapVideo(doc.toObject());
+  }
+
+  async listVideosByProject(projectId: string): Promise<ProjectVideoRecord[]> {
+    await connectMongo();
+    const docs = await ProjectVideoModel.find({ projectId })
+      .sort({ createdAt: -1 })
+      .lean();
+    return docs.map(mapVideo);
+  }
+
+  async getVideo(id: string): Promise<ProjectVideoRecord | null> {
+    await connectMongo();
+    const doc = await ProjectVideoModel.findById(id).lean();
+    return doc ? mapVideo(doc) : null;
+  }
+
+  async updateVideo(
+    id: string,
+    patch: Partial<Omit<ProjectVideoRecord, "id" | "projectId" | "createdAt">>,
+  ): Promise<ProjectVideoRecord | null> {
+    await connectMongo();
+    const doc = await ProjectVideoModel.findByIdAndUpdate(id, patch, {
+      new: true,
+    }).lean();
+    return doc ? mapVideo(doc) : null;
+  }
+
+  async deleteVideo(id: string): Promise<boolean> {
+    await connectMongo();
+    const res = await ProjectVideoModel.findByIdAndDelete(id);
+    await VideoAssetModel.deleteMany({ videoId: id });
+    await JobModel.deleteMany({ videoId: id });
     return Boolean(res);
   }
 
@@ -119,6 +191,7 @@ export class MongooseBackend implements DbBackend {
     await connectMongo();
     const doc = await JobModel.create({
       projectId: input.projectId,
+      videoId: input.videoId,
       type: input.type,
       status: "queued",
       progress: 0,
@@ -142,9 +215,25 @@ export class MongooseBackend implements DbBackend {
     return docs.map(mapJob);
   }
 
+  async listJobsByVideo(videoId: string): Promise<JobRecord[]> {
+    await connectMongo();
+    const docs = await JobModel.find({ videoId })
+      .sort({ createdAt: -1 })
+      .lean();
+    return docs.map(mapJob);
+  }
+
   async getLatestJobByProject(projectId: string): Promise<JobRecord | null> {
     await connectMongo();
     const doc = await JobModel.findOne({ projectId })
+      .sort({ createdAt: -1 })
+      .lean();
+    return doc ? mapJob(doc) : null;
+  }
+
+  async getLatestJobByVideo(videoId: string): Promise<JobRecord | null> {
+    await connectMongo();
+    const doc = await JobModel.findOne({ videoId })
       .sort({ createdAt: -1 })
       .lean();
     return doc ? mapJob(doc) : null;
@@ -168,8 +257,6 @@ export class MongooseBackend implements DbBackend {
 
   async claimNextJob(): Promise<JobRecord | null> {
     await connectMongo();
-    // Atomically claim the oldest queued job and transition it to its first
-    // running status to prevent other workers from re-claiming it.
     const queued = await JobModel.findOne({ status: "queued" })
       .sort({ createdAt: 1 })
       .lean();
@@ -201,14 +288,33 @@ export class MongooseBackend implements DbBackend {
     return docs.map(mapAsset);
   }
 
+  async listAssetsByVideo(videoId: string): Promise<AssetRecord[]> {
+    await connectMongo();
+    const docs = await VideoAssetModel.find({ videoId })
+      .sort({ createdAt: -1 })
+      .lean();
+    return docs.map(mapAsset);
+  }
+
   async getAsset(id: string): Promise<AssetRecord | null> {
     await connectMongo();
     const doc = await VideoAssetModel.findById(id).lean();
     return doc ? mapAsset(doc) : null;
   }
 
-  async deleteAssetsByProject(projectId: string): Promise<void> {
+  async updateAsset(
+    id: string,
+    patch: Partial<Omit<AssetRecord, "id" | "createdAt">>,
+  ): Promise<AssetRecord | null> {
     await connectMongo();
-    await VideoAssetModel.deleteMany({ projectId });
+    const doc = await VideoAssetModel.findByIdAndUpdate(id, patch, {
+      new: true,
+    }).lean();
+    return doc ? mapAsset(doc) : null;
+  }
+
+  async deleteAssetsByVideo(videoId: string): Promise<void> {
+    await connectMongo();
+    await VideoAssetModel.deleteMany({ videoId });
   }
 }

@@ -1,13 +1,9 @@
 import { db } from "@/lib/db";
 import { createLogger } from "@/lib/logger";
-import type { JobStatus, ProjectStatus } from "@/types";
+import type { JobStatus, ProjectStatus, VideoStatus } from "@/types";
 
 const log = createLogger("pipeline");
 
-/**
- * Reporter passed into pipeline services so they can stream progress/log lines
- * back to the Job document and record any missing credentials/keys.
- */
 export interface Reporter {
   log(line: string): Promise<void>;
   missing(name: string): Promise<void>;
@@ -16,11 +12,13 @@ export interface Reporter {
 export class PipelineContext implements Reporter {
   readonly jobId: string;
   readonly projectId: string;
+  readonly videoId?: string;
   private missingSet = new Set<string>();
 
-  constructor(jobId: string, projectId: string) {
+  constructor(jobId: string, projectId: string, videoId?: string) {
     this.jobId = jobId;
     this.projectId = projectId;
+    this.videoId = videoId;
   }
 
   async log(line: string): Promise<void> {
@@ -50,7 +48,7 @@ export class PipelineContext implements Reporter {
 
   async setStatus(
     jobStatus: JobStatus,
-    projectStatus?: ProjectStatus,
+    entityStatus?: ProjectStatus | VideoStatus,
     progress?: number,
   ): Promise<void> {
     await db.updateJob(this.jobId, {
@@ -59,8 +57,14 @@ export class PipelineContext implements Reporter {
         ? { progress: Math.max(0, Math.min(100, Math.round(progress))) }
         : {}),
     });
-    if (projectStatus) {
-      await db.updateProject(this.projectId, { status: projectStatus });
+    if (entityStatus && this.videoId) {
+      await db.updateVideo(this.videoId, {
+        status: entityStatus as VideoStatus,
+      });
+    } else if (entityStatus) {
+      await db.updateProject(this.projectId, {
+        status: entityStatus as ProjectStatus,
+      });
     }
   }
 }

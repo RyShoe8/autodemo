@@ -5,6 +5,17 @@
 export type ProjectStatus =
   | "draft"
   | "discovering"
+  | "ready"
+  | "failed"
+  /** @deprecated legacy values from single-video model */
+  | "awaiting_approval"
+  | "recording"
+  | "rendering"
+  | "completed";
+
+export type VideoStatus =
+  | "draft"
+  | "building_workflow"
   | "awaiting_approval"
   | "recording"
   | "rendering"
@@ -24,7 +35,11 @@ export type JobStatus =
   | "completed"
   | "failed";
 
-export type JobType = "discover" | "produce";
+export type JobType =
+  | "discover"
+  | "build_workflow"
+  | "produce"
+  | "render_bumper";
 
 export type Platform =
   | "youtube"
@@ -129,6 +144,8 @@ export interface PlatformSpec {
 
 export interface AssetSummary {
   id: string;
+  projectId: string;
+  videoId: string;
   platform: Platform;
   videoUrl: string;
   audioUrl?: string;
@@ -138,26 +155,39 @@ export interface AssetSummary {
   createdAt: string;
 }
 
+export interface ProjectVideoDTO {
+  id: string;
+  projectId: string;
+  name: string;
+  prompt: string;
+  voiceOption: VoiceOption;
+  platforms: Platform[];
+  workflow: WorkflowStep[];
+  status: VideoStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
 export interface ProjectDTO {
   id: string;
   name: string;
   url: string;
   loginEmail: string;
-  prompt: string;
-  voiceOption: VoiceOption;
-  platforms: Platform[];
-  workflow: WorkflowStep[];
   status: ProjectStatus;
   logoUrl?: string;
   brandColor: string;
   bumperEnabled: boolean;
   bumperDurationSeconds: number;
+  bumperUrl?: string;
+  bumperTitle: string;
+  bumperTagline?: string;
   createdAt: string;
 }
 
 export interface JobDTO {
   id: string;
   projectId: string;
+  videoId?: string;
   type: JobType;
   status: JobStatus;
   progress: number;
@@ -240,6 +270,17 @@ export const VOICE_LABELS: Record<VoiceOption, string> = {
 export const PROJECT_STATUS_LABELS: Record<ProjectStatus, string> = {
   draft: "Draft",
   discovering: "Discovering",
+  ready: "Ready",
+  failed: "Failed",
+  awaiting_approval: "Awaiting approval",
+  recording: "Recording",
+  rendering: "Rendering",
+  completed: "Completed",
+};
+
+export const VIDEO_STATUS_LABELS: Record<VideoStatus, string> = {
+  draft: "Draft",
+  building_workflow: "Building workflow",
   awaiting_approval: "Awaiting approval",
   recording: "Recording",
   rendering: "Rendering",

@@ -3,6 +3,7 @@ import type {
   JobType,
   Platform,
   ProjectStatus,
+  VideoStatus,
   VoiceOption,
   WorkflowStep,
   ApplicationMap,
@@ -14,22 +15,40 @@ export interface ProjectRecord {
   url: string;
   loginEmail: string;
   encryptedPassword: string;
-  prompt: string;
-  voiceOption: VoiceOption;
-  platforms: Platform[];
-  workflow: WorkflowStep[];
   applicationMap?: ApplicationMap;
   status: ProjectStatus;
   logoUrl?: string;
   brandColor: string;
   bumperEnabled: boolean;
   bumperDurationSeconds: number;
+  bumperUrl?: string;
+  bumperTitle: string;
+  bumperTagline?: string;
   createdAt: Date;
+  /** @deprecated migrated to ProjectVideo */
+  prompt?: string;
+  voiceOption?: VoiceOption;
+  platforms?: Platform[];
+  workflow?: WorkflowStep[];
+}
+
+export interface ProjectVideoRecord {
+  id: string;
+  projectId: string;
+  name: string;
+  prompt: string;
+  voiceOption: VoiceOption;
+  platforms: Platform[];
+  workflow: WorkflowStep[];
+  status: VideoStatus;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface JobRecord {
   id: string;
   projectId: string;
+  videoId?: string;
   type: JobType;
   status: JobStatus;
   progress: number;
@@ -44,6 +63,7 @@ export interface JobRecord {
 export interface AssetRecord {
   id: string;
   projectId: string;
+  videoId: string;
   platform: Platform;
   videoUrl: string;
   audioUrl?: string;
@@ -58,21 +78,32 @@ export interface CreateProjectInput {
   url: string;
   loginEmail: string;
   encryptedPassword: string;
-  prompt: string;
-  voiceOption: VoiceOption;
-  platforms: Platform[];
   brandColor?: string;
   bumperEnabled?: boolean;
   bumperDurationSeconds?: number;
+  bumperTitle?: string;
+  bumperTagline?: string;
+}
+
+export interface CreateProjectVideoInput {
+  projectId: string;
+  name: string;
+  prompt: string;
+  voiceOption: VoiceOption;
+  platforms: Platform[];
+  workflow?: WorkflowStep[];
+  status?: VideoStatus;
 }
 
 export interface CreateJobInput {
   projectId: string;
+  videoId?: string;
   type: JobType;
 }
 
 export interface CreateAssetInput {
   projectId: string;
+  videoId: string;
   platform: Platform;
   videoUrl: string;
   audioUrl?: string;
@@ -92,11 +123,23 @@ export interface DbBackend {
   ): Promise<ProjectRecord | null>;
   deleteProject(id: string): Promise<boolean>;
 
+  // Project videos
+  createVideo(input: CreateProjectVideoInput): Promise<ProjectVideoRecord>;
+  listVideosByProject(projectId: string): Promise<ProjectVideoRecord[]>;
+  getVideo(id: string): Promise<ProjectVideoRecord | null>;
+  updateVideo(
+    id: string,
+    patch: Partial<Omit<ProjectVideoRecord, "id" | "projectId" | "createdAt">>,
+  ): Promise<ProjectVideoRecord | null>;
+  deleteVideo(id: string): Promise<boolean>;
+
   // Jobs
   createJob(input: CreateJobInput): Promise<JobRecord>;
   getJob(id: string): Promise<JobRecord | null>;
   listJobsByProject(projectId: string): Promise<JobRecord[]>;
+  listJobsByVideo(videoId: string): Promise<JobRecord[]>;
   getLatestJobByProject(projectId: string): Promise<JobRecord | null>;
+  getLatestJobByVideo(videoId: string): Promise<JobRecord | null>;
   updateJob(
     id: string,
     patch: Partial<Omit<JobRecord, "id" | "createdAt" | "projectId">>,
@@ -107,10 +150,25 @@ export interface DbBackend {
   // Assets
   createAsset(input: CreateAssetInput): Promise<AssetRecord>;
   listAssetsByProject(projectId: string): Promise<AssetRecord[]>;
+  listAssetsByVideo(videoId: string): Promise<AssetRecord[]>;
   getAsset(id: string): Promise<AssetRecord | null>;
-  deleteAssetsByProject(projectId: string): Promise<void>;
+  updateAsset(
+    id: string,
+    patch: Partial<Omit<AssetRecord, "id" | "createdAt">>,
+  ): Promise<AssetRecord | null>;
+  deleteAssetsByVideo(videoId: string): Promise<void>;
 }
 
 export function firstStatusForType(type: JobType): JobStatus {
-  return type === "discover" ? "discovering" : "recording";
+  switch (type) {
+    case "discover":
+      return "discovering";
+    case "build_workflow":
+      return "building_workflow";
+    case "render_bumper":
+      return "rendering";
+    case "produce":
+    default:
+      return "recording";
+  }
 }

@@ -5,11 +5,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  PLATFORM_SPECS,
-  VOICE_LABELS,
-  type ProjectDTO,
-} from "@/types";
+import type { ProjectDTO } from "@/types";
 import { formatDate } from "@/lib/utils";
 
 export function ProjectInfo({ project }: { project: ProjectDTO }) {
@@ -34,23 +30,18 @@ export function ProjectInfo({ project }: { project: ProjectDTO }) {
             <span className="text-muted-foreground">Not set</span>
           )}
         </Row>
-        <Row label="Voice">{VOICE_LABELS[project.voiceOption]}</Row>
-        <Row label="Platforms">
-          <div className="flex flex-wrap gap-1.5">
-            {project.platforms.map((p) => (
-              <Badge key={p} variant="secondary">
-                {PLATFORM_SPECS[p].label}
-              </Badge>
-            ))}
-          </div>
+        <Row label="Bumper">
+          {project.bumperEnabled ? (
+            project.bumperUrl ? (
+              <Badge variant="success">Generated</Badge>
+            ) : (
+              <Badge variant="secondary">Not generated</Badge>
+            )
+          ) : (
+            <Badge variant="secondary">Disabled</Badge>
+          )}
         </Row>
         <Row label="Created">{formatDate(project.createdAt)}</Row>
-        <div className="space-y-1.5">
-          <p className="text-muted-foreground">Description</p>
-          <p className="whitespace-pre-wrap leading-relaxed">
-            {project.prompt}
-          </p>
-        </div>
       </CardContent>
     </Card>
   );

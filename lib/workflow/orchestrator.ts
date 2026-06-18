@@ -12,7 +12,7 @@ import { generateScript, buildTemplateScript } from "@/lib/openai/script";
 import { generateVoice } from "@/lib/video/voice";
 import { generateCaptions } from "@/lib/video/captions";
 import { generateThumbnail } from "@/lib/video/thumbnail";
-import { buildBaseProps, renderToFile } from "@/lib/video/render";
+import { buildBaseProps, renderBumperToFile, renderToFile } from "@/lib/video/render";
 import { exportPlatform } from "@/lib/ffmpeg/export";
 import { enrichWorkflowSteps } from "@/lib/playwright/step-resolver";
 import { createLogger } from "@/lib/logger";
@@ -22,11 +22,10 @@ import {
   exportVariantMaxSeconds,
   type Platform,
 } from "@/types";
-import type { JobRecord, ProjectRecord } from "@/lib/db/types";
+import type { JobRecord, ProjectRecord, ProjectVideoRecord } from "@/lib/db/types";
 
 const log = createLogger("orchestrator");
 
-/** Entry point: run a claimed job to completion. */
 export async function runJob(job: JobRecord): Promise<void> {
   const project = await db.getProject(job.projectId);
   if (!project) {
@@ -38,13 +37,32 @@ export async function runJob(job: JobRecord): Promise<void> {
     return;
   }
 
-  const ctx = new PipelineContext(job.id, job.projectId);
+  const ctx = new PipelineContext(job.id, job.projectId, job.videoId);
   try {
     await ctx.log(`Starting ${job.type} job for "${project.name}".`);
-    if (job.type === "discover") {
-      await runDiscover(ctx, project);
-    } else {
-      await runProduce(ctx, project);
+    switch (job.type) {
+      case "discover":
+        await runDiscover(ctx, project);
+        break;
+      case "build_workflow": {
+        if (!job.videoId) throw new Error("build_workflow requires videoId");
+        const video = await db.getVideo(job.videoId);
+        if (!video) throw new Error("Video no longer exists");
+        await runBuildWorkflow(ctx, project, video);
+        break;
+      }
+      case "render_bumper":
+        await runRenderBumper(ctx, project);
+        break;
+      case "produce": {
+        if (!job.videoId) throw new Error("produce requires videoId");
+        const video = await db.getVideo(job.videoId);
+        if (!video) throw new Error("Video no longer exists");
+        await runProduce(ctx, project, video);
+        break;
+      }
+      default:
+        throw new Error(`Unknown job type: ${job.type}`);
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -55,7 +73,11 @@ export async function runJob(job: JobRecord): Promise<void> {
       error: message,
       completedAt: new Date(),
     });
-    await db.updateProject(job.projectId, { status: "failed" });
+    if (job.videoId) {
+      await db.updateVideo(job.videoId, { status: "failed" });
+    } else if (job.type === "discover" || job.type === "render_bumper") {
+      await db.updateProject(job.projectId, { status: "failed" });
+    }
   }
 }
 
@@ -75,19 +97,37 @@ async function runDiscover(ctx: PipelineContext, project: ProjectRecord) {
   const { discoveredLogoUrl, ...mapForStorage } = applicationMap;
   await db.updateProject(project.id, {
     applicationMap: mapForStorage,
+    status: "ready",
     ...(!project.logoUrl && discoveredLogoUrl
       ? { logoUrl: discoveredLogoUrl }
       : {}),
   });
-  await ctx.setProgress(40);
 
-  await ctx.setStatus("building_workflow", "discovering", 55);
+  await ctx.log("Discovery complete — application map ready.");
+  await ctx.setStatus("completed", "ready", 100);
+  await db.updateJob(ctx.jobId, {
+    completedAt: new Date(),
+    missingCredentials: ctx.missingCredentials,
+  });
+}
+
+async function runBuildWorkflow(
+  ctx: PipelineContext,
+  project: ProjectRecord,
+  video: ProjectVideoRecord,
+) {
+  if (!project.applicationMap) {
+    throw new Error("Run discovery on the project before building a workflow.");
+  }
+
+  await ctx.setStatus("building_workflow", "building_workflow", 10);
   const workflow = await generateWorkflow({
-    prompt: project.prompt,
-    applicationMap,
+    prompt: video.prompt,
+    applicationMap: project.applicationMap,
     reporter: ctx,
   });
-  await db.updateProject(project.id, {
+
+  await db.updateVideo(video.id, {
     workflow,
     status: "awaiting_approval",
   });
@@ -100,9 +140,49 @@ async function runDiscover(ctx: PipelineContext, project: ProjectRecord) {
   });
 }
 
-async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
+async function runRenderBumper(ctx: PipelineContext, project: ProjectRecord) {
+  await ctx.setStatus("rendering", undefined, 10);
+  const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "autodemo-bumper-"));
+  const outPath = path.join(tmpDir, "bumper.mp4");
+
+  await ctx.log("Rendering project bumper…");
+  await renderBumperToFile(
+    {
+      title: project.bumperTitle ?? project.name,
+      tagline: project.bumperTagline,
+      logoUrl: project.logoUrl,
+      brandColor: project.brandColor ?? "#38bdf8",
+      durationSeconds: project.bumperDurationSeconds ?? 4,
+      reporter: ctx,
+    },
+    outPath,
+  );
+
+  const buffer = await fs.readFile(outPath);
+  const { url } = await storage.save(
+    `projects/${project.id}/bumper/bumper.mp4`,
+    buffer,
+    "video/mp4",
+  );
+
+  await db.updateProject(project.id, { bumperUrl: url });
+  await ctx.log(`Bumper saved (${project.bumperDurationSeconds ?? 4}s).`);
+  await ctx.setStatus("completed", undefined, 100);
+  await db.updateJob(ctx.jobId, {
+    completedAt: new Date(),
+    missingCredentials: ctx.missingCredentials,
+  });
+
+  await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+}
+
+async function runProduce(
+  ctx: PipelineContext,
+  project: ProjectRecord,
+  video: ProjectVideoRecord,
+) {
   const enrichedWorkflow = enrichWorkflowSteps(
-    project.workflow ?? [],
+    video.workflow ?? [],
     project.applicationMap,
   );
   const workflow = enrichedWorkflow.filter((s) => s.enabled);
@@ -110,7 +190,6 @@ async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
     throw new Error("No enabled workflow steps to record.");
   }
 
-  // 1. Recording
   await ctx.setStatus("recording", "recording", 10);
   const password = decrypt(project.encryptedPassword);
   const recording = await executeWorkflow({
@@ -125,31 +204,26 @@ async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
   await ctx.log(`Captured ${recording.scenes.length} scenes.`);
   await ctx.setProgress(30);
 
-  // 2. Script
   await ctx.setStatus("generating_script", "recording", 35);
   const scriptInput = {
-    prompt: project.prompt,
-    projectName: project.name,
+    prompt: video.prompt,
+    projectName: video.name,
     steps: workflow,
     reporter: ctx,
   };
-  let script;
-  if (project.voiceOption === "no_audio") {
-    await ctx.log("Script: template (no OpenAI call — no audio).");
-    script = buildTemplateScript(scriptInput);
-  } else {
-    script = await generateScript(scriptInput);
-  }
+  const script =
+    video.voiceOption === "no_audio"
+      ? (await ctx.log("Script: template (no OpenAI call — no audio)."),
+        buildTemplateScript(scriptInput))
+      : await generateScript(scriptInput);
 
-  // 3. Audio
   await ctx.setStatus("generating_audio", "recording", 50);
-  const voice = await generateVoice(project.voiceOption, {
+  const voice = await generateVoice(video.voiceOption, {
     script,
     projectId: project.id,
     reporter: ctx,
   });
 
-  // 4. Render master
   await ctx.setStatus("rendering", "rendering", 65);
   const baseProps = await buildBaseProps({
     script,
@@ -159,37 +233,42 @@ async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
     branding: {
       logoUrl: project.logoUrl,
       brandColor: project.brandColor ?? "#38bdf8",
-      bumperEnabled: project.bumperEnabled !== false,
-      bumperDurationSeconds: project.bumperDurationSeconds ?? 4,
+      bumperEnabled: false,
+      bumperDurationSeconds: 0,
     },
     reporter: ctx,
   });
 
   const masterDir = await fs.mkdtemp(path.join(os.tmpdir(), "autodemo-master-"));
   const masterPath = path.join(masterDir, "master.mp4");
-  await ctx.log("Rendering 16:9 master video…");
+  await ctx.log("Rendering 16:9 body master (no inline bumper)…");
   await renderToFile(baseProps, masterPath, ctx);
   const masterBuffer = await fs.readFile(masterPath);
   await storage.save(
-    `projects/${project.id}/exports/master.mp4`,
+    `projects/${project.id}/videos/${video.id}/exports/master.mp4`,
     masterBuffer,
     "video/mp4",
   );
   await ctx.setProgress(75);
 
-  // 5. Captions
+  const bumperOffset =
+    project.bumperEnabled && project.bumperUrl
+      ? project.bumperDurationSeconds ?? 4
+      : 0;
+
   const captionUrl = await generateCaptions({
     projectId: project.id,
+    videoId: video.id,
     segments: voice.segments,
+    bumperOffsetSeconds: bumperOffset,
     reporter: ctx,
   });
 
-  // 6. Per-platform export + thumbnails
   await ctx.setStatus("exporting", "rendering", 80);
-  await db.deleteAssetsByProject(project.id);
+  await db.deleteAssetsByVideo(video.id);
 
   const baseScreenshot = recording.scenes[0]?.screenshot;
-  const platforms = (project.platforms ?? []) as Platform[];
+  const platforms = (video.platforms ?? []) as Platform[];
   const scriptJson = JSON.stringify(script, null, 2);
 
   const variantGroups = new Map<string, Platform[]>();
@@ -203,6 +282,12 @@ async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
   const groupEntries = Array.from(variantGroups.entries());
   let completedGroups = 0;
 
+  const exportBranding = {
+    bumperEnabled: project.bumperEnabled !== false,
+    bumperUrl: project.bumperUrl,
+    bumperDurationSeconds: project.bumperDurationSeconds ?? 4,
+  };
+
   for (const [variantKey, groupPlatforms] of groupEntries) {
     const representative = groupPlatforms[0];
     const spec = PLATFORM_SPECS[representative];
@@ -212,23 +297,23 @@ async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
       .map((p) => PLATFORM_SPECS[p].label)
       .join(", ");
 
-    await ctx.log(
-      `Exporting ${variantKey} variant for ${platformLabels}…`,
-    );
+    await ctx.log(`Exporting ${variantKey} variant for ${platformLabels}…`);
 
     const videoUrl = await exportPlatform({
       projectId: project.id,
+      videoId: video.id,
       masterPath,
       baseProps,
       platform: representative,
+      branding: exportBranding,
       variantKey,
       maxSeconds,
       reporter: ctx,
     });
 
     const thumbnailUrl = await generateThumbnail({
-      projectId: `${project.id}/${variantKey}`,
-      title: project.name,
+      projectId: `${project.id}/videos/${video.id}/${variantKey}`,
+      title: video.name,
       headline: script.title,
       baseScreenshotUrl: baseScreenshot,
       width: isPortrait ? 720 : 1280,
@@ -239,6 +324,7 @@ async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
     for (const platform of groupPlatforms) {
       await db.createAsset({
         projectId: project.id,
+        videoId: video.id,
         platform,
         videoUrl,
         audioUrl: voice.audioUrl,

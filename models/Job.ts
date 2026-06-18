@@ -8,6 +8,11 @@ const JobSchema = new Schema(
       required: true,
       index: true,
     },
+    videoId: {
+      type: Schema.Types.ObjectId,
+      ref: "ProjectVideo",
+      index: true,
+    },
     type: { type: String, required: true },
     status: { type: String, required: true, default: "queued", index: true },
     progress: { type: Number, default: 0 },

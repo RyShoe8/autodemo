@@ -1,14 +1,14 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Film, ListChecks, Pencil } from "lucide-react";
+import { Pencil } from "lucide-react";
 import { db } from "@/lib/db";
-import { toProjectDTO } from "@/lib/serialize";
+import { toProjectDTO, toProjectVideoDTO } from "@/lib/serialize";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { ProjectStatusBadge } from "@/components/status/status-badge";
 import { ProjectInfo } from "@/components/projects/project-info";
-import { WorkflowSummary } from "@/components/workflow/workflow-summary";
-import { GenerationPanel } from "@/components/projects/generation-panel";
+import { ProjectDiscoveryPanel } from "@/components/projects/project-discovery-panel";
+import { VideoList } from "@/components/projects/video-list";
 
 export const dynamic = "force-dynamic";
 
@@ -21,6 +21,7 @@ export default async function ProjectDetailPage({
   const record = await db.getProject(id);
   if (!record) notFound();
   const project = toProjectDTO(record);
+  const videos = (await db.listVideosByProject(id)).map(toProjectVideoDTO);
 
   return (
     <div className="mx-auto max-w-5xl">
@@ -31,25 +32,19 @@ export default async function ProjectDetailPage({
             <Pencil className="h-4 w-4" /> Edit
           </Link>
         </Button>
-        <Button asChild variant="outline">
-          <Link href={`/projects/${id}/workflow`}>
-            <ListChecks className="h-4 w-4" /> Workflow
-          </Link>
-        </Button>
-        <Button asChild variant="outline">
-          <Link href={`/projects/${id}/assets`}>
-            <Film className="h-4 w-4" /> Assets
-          </Link>
-        </Button>
       </PageHeader>
 
       <div className="grid gap-6 lg:grid-cols-2">
         <div className="space-y-6">
           <ProjectInfo project={project} />
-          <WorkflowSummary projectId={id} workflow={project.workflow} />
+          <VideoList
+            projectId={id}
+            videos={videos}
+            canCreate={project.status === "ready"}
+          />
         </div>
         <div className="space-y-6">
-          <GenerationPanel projectId={id} />
+          <ProjectDiscoveryPanel projectId={id} status={project.status} />
         </div>
       </div>
     </div>

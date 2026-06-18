@@ -51,8 +51,8 @@ function EmptyState({ label }: { label: string }) {
   );
 }
 
-export function AssetLibrary({ projectId }: { projectId: string }) {
-  const { assets, loading } = useAssets(projectId);
+export function AssetLibrary({ videoId }: { videoId: string }) {
+  const { assets, loading } = useAssets({ videoId });
   const [scriptOpen, setScriptOpen] = useState<AssetSummary | null>(null);
 
   if (loading && assets.length === 0) {

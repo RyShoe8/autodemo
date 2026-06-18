@@ -8,6 +8,12 @@ const VideoAssetSchema = new Schema(
       required: true,
       index: true,
     },
+    videoId: {
+      type: Schema.Types.ObjectId,
+      ref: "ProjectVideo",
+      required: true,
+      index: true,
+    },
     platform: {
       type: String,
       enum: ["youtube", "linkedin", "x", "bluesky", "tiktok", "instagram"],

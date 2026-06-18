@@ -35,20 +35,14 @@ export const createProjectSchema = z.object({
     .or(z.literal(""))
     .default(""),
   loginPassword: z.string().max(500).default(""),
-  prompt: z
-    .string()
-    .min(10, "Describe what the video should demonstrate (min 10 chars)")
-    .max(4000),
-  platforms: z
-    .array(platformEnum)
-    .min(1, "Select at least one platform"),
-  voiceOption: voiceEnum.default("openai_tts"),
   brandColor: z
     .string()
     .regex(/^#[0-9A-Fa-f]{6}$/, "Enter a valid hex color")
     .default("#38bdf8"),
   bumperEnabled: z.boolean().default(true),
   bumperDurationSeconds: z.number().min(2).max(8).default(4),
+  bumperTitle: z.string().max(120).optional(),
+  bumperTagline: z.string().max(200).optional(),
 });
 
 export type CreateProjectValues = z.input<typeof createProjectSchema>;
@@ -60,6 +54,22 @@ export const updateProjectSchema = createProjectSchema.partial().extend({
 
 export type UpdateProjectValues = z.input<typeof updateProjectSchema>;
 export type UpdateProjectParsed = z.output<typeof updateProjectSchema>;
+
+export const createProjectVideoSchema = z.object({
+  name: z.string().min(1, "Video name is required").max(120),
+  prompt: z
+    .string()
+    .min(10, "Describe what the video should demonstrate (min 10 chars)")
+    .max(4000),
+  platforms: z.array(platformEnum).min(1, "Select at least one platform"),
+  voiceOption: voiceEnum.default("openai_tts"),
+});
+
+export type CreateProjectVideoValues = z.input<typeof createProjectVideoSchema>;
+
+export const updateProjectVideoSchema = createProjectVideoSchema.partial();
+
+export type UpdateProjectVideoValues = z.input<typeof updateProjectVideoSchema>;
 
 export const workflowStepSchema = z.object({
   id: z.string(),
@@ -75,7 +85,6 @@ export const workflowStepSchema = z.object({
 
 export const workflowSchema = z.array(workflowStepSchema);
 
-/** Schema OpenAI is asked to satisfy when generating a workflow. */
 export const aiWorkflowStepSchema = z.object({
   title: z.string().min(1),
   description: z.string().default(""),
@@ -104,6 +113,7 @@ export const scriptSchema = z.object({
 });
 
 export const updateWorkflowSchema = z.object({
+  videoId: z.string().min(1),
   workflow: workflowSchema,
 });
 
@@ -113,5 +123,14 @@ export const loginSchema = z.object({
 
 export const generateSchema = z.object({
   projectId: z.string().min(1),
-  type: z.enum(["discover", "produce"]).default("discover"),
+  videoId: z.string().min(1).optional(),
+  type: z
+    .enum(["discover", "build_workflow", "produce", "render_bumper"])
+    .default("discover"),
+});
+
+export const workflowActionRequestSchema = z.object({
+  videoId: z.string().min(1),
+  action: z.enum(["approve", "regenerate"]),
+  workflow: workflowSchema.optional(),
 });

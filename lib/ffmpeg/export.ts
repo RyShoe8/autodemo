@@ -2,21 +2,28 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
-import { storage } from "@/lib/storage";
+import { storage, readAsset } from "@/lib/storage";
 import { renderToFile, RENDER_FPS } from "@/lib/video/render";
+import { prependBumperToExport } from "@/lib/ffmpeg/concat";
 import { computeDurationInFrames, type DemoVideoProps } from "@/lib/remotion/types";
 import { PLATFORM_SPECS, type Platform } from "@/types";
 import type { Reporter } from "@/lib/workflow/context";
 
+export interface ExportBranding {
+  bumperEnabled: boolean;
+  bumperUrl?: string;
+  bumperDurationSeconds: number;
+}
+
 export interface ExportInput {
   projectId: string;
+  videoId: string;
   masterPath: string;
   baseProps: DemoVideoProps;
   platform: Platform;
+  branding: ExportBranding;
   reporter: Reporter;
-  /** Storage key when multiple platforms share the same render (e.g. "1920x1080"). */
   variantKey?: string;
-  /** Override max trim duration when platforms in a variant group differ. */
   maxSeconds?: number;
 }
 
@@ -61,7 +68,8 @@ function buildVariantProps(
     height: spec.height,
     introFrames: scale(baseProps.introFrames),
     outroFrames: scale(baseProps.outroFrames),
-    bumperFrames: scale(baseProps.bumperFrames),
+    bumperFrames: 0,
+    bumperEnabled: false,
     scenes: baseProps.scenes.map((s) => ({
       ...s,
       durationInFrames: scale(s.durationInFrames),
@@ -69,7 +77,7 @@ function buildVariantProps(
   };
 }
 
-async function ffmpegTransform(input: ExportInput): Promise<string> {
+async function ffmpegTransformBody(input: ExportInput): Promise<string> {
   const ffmpegModule = await import("fluent-ffmpeg");
   const ffmpeg = ffmpegModule.default;
   if (process.env.FFMPEG_PATH) ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
@@ -102,13 +110,46 @@ async function ffmpegTransform(input: ExportInput): Promise<string> {
   return out;
 }
 
-/**
- * Produce a platform-specific export from the master video. Uses FFmpeg to
- * reformat/trim the master; if FFmpeg is unavailable, re-renders the variant
- * with Remotion at the target dimensions and duration.
- */
+async function applyBumperIfNeeded(
+  input: ExportInput,
+  bodyPath: string,
+): Promise<string> {
+  const useBumper =
+    input.branding.bumperEnabled &&
+    Boolean(input.branding.bumperUrl) &&
+    hasFfmpeg();
+
+  if (!useBumper || !input.branding.bumperUrl) {
+    return bodyPath;
+  }
+
+  const spec = PLATFORM_SPECS[input.platform];
+  const cap = input.maxSeconds ?? spec.maxSeconds;
+  const out = await tmpFile("-with-bumper.mp4");
+  const tmpDir = path.dirname(bodyPath);
+
+  const bumperTmp = path.join(tmpDir, "bumper-source.mp4");
+  const bumperBuffer = await readAsset(input.branding.bumperUrl);
+  await fs.writeFile(bumperTmp, bumperBuffer);
+
+  await input.reporter.log(
+    `Prepending ${input.branding.bumperDurationSeconds}s project bumper…`,
+  );
+
+  await prependBumperToExport({
+    bumperPath: bumperTmp,
+    bodyPath,
+    outputPath: out,
+    width: spec.width,
+    height: spec.height,
+    bodyMaxSeconds: cap,
+  });
+
+  return out;
+}
+
 export async function exportPlatform(input: ExportInput): Promise<string> {
-  const { reporter, platform, projectId } = input;
+  const { reporter, platform, projectId, videoId } = input;
   const spec = PLATFORM_SPECS[platform];
   let filePath: string;
 
@@ -117,7 +158,8 @@ export async function exportPlatform(input: ExportInput): Promise<string> {
       `Exporting ${spec.label} (${spec.width}x${spec.height}) with FFmpeg…`,
     );
     try {
-      filePath = await ffmpegTransform(input);
+      const bodyPath = await ffmpegTransformBody(input);
+      filePath = await applyBumperIfNeeded(input, bodyPath);
     } catch (err) {
       await reporter.log(
         `FFmpeg export failed (${err instanceof Error ? err.message : String(err)}) — re-rendering with Remotion.`,
@@ -135,7 +177,7 @@ export async function exportPlatform(input: ExportInput): Promise<string> {
   const buffer = await fs.readFile(filePath);
   const storageKey = input.variantKey ?? platform;
   const { url } = await storage.save(
-    `projects/${projectId}/exports/${storageKey}.mp4`,
+    `projects/${projectId}/videos/${videoId}/exports/${storageKey}.mp4`,
     buffer,
     "video/mp4",
   );
@@ -154,5 +196,5 @@ async function renderVariantWithRemotion(input: ExportInput): Promise<string> {
   );
   const out = await tmpFile(".mp4");
   await renderToFile(props, out, input.reporter);
-  return out;
+  return applyBumperIfNeeded(input, out);
 }

@@ -6,23 +6,18 @@ import type {
   CreateAssetInput,
   CreateJobInput,
   CreateProjectInput,
+  CreateProjectVideoInput,
   DbBackend,
   JobRecord,
   ProjectRecord,
+  ProjectVideoRecord,
 } from "@/lib/db/types";
 import { firstStatusForType } from "@/lib/db/types";
-
-/**
- * File-backed datastore used when MONGODB_URI is not configured. Stores each
- * collection as a JSON file under ./storage/db so the Next.js app and the
- * standalone worker (running on the same machine) can share state during local
- * development. A lock file provides best-effort cross-process mutual exclusion.
- */
 
 const DB_DIR = path.join(process.cwd(), "storage", "db");
 const LOCK_FILE = path.join(DB_DIR, ".lock");
 
-type Collection = "projects" | "jobs" | "assets";
+type Collection = "projects" | "jobs" | "assets" | "videos";
 
 async function ensureDir() {
   await fs.mkdir(DB_DIR, { recursive: true });
@@ -36,6 +31,7 @@ async function readCollection<T>(name: Collection): Promise<T[]> {
     const parsed = JSON.parse(raw, (key, value) => {
       if (
         (key === "createdAt" ||
+          key === "updatedAt" ||
           key === "startedAt" ||
           key === "completedAt") &&
         typeof value === "string"
@@ -73,7 +69,6 @@ async function acquireLock(): Promise<() => Promise<void>> {
         }
       };
     } catch {
-      // Stale lock detection: remove locks older than 30s.
       try {
         const stat = await fs.stat(LOCK_FILE);
         if (Date.now() - stat.mtimeMs > 30_000) {
@@ -85,7 +80,6 @@ async function acquireLock(): Promise<() => Promise<void>> {
       await sleep(50);
     }
   }
-  // Give up on locking but proceed (best effort).
   return async () => {};
 }
 
@@ -104,11 +98,15 @@ export class FileBackend implements DbBackend {
       const projects = await readCollection<ProjectRecord>("projects");
       const record: ProjectRecord = {
         id: uid("prj"),
-        ...input,
+        name: input.name,
+        url: input.url,
+        loginEmail: input.loginEmail,
+        encryptedPassword: input.encryptedPassword,
         brandColor: input.brandColor ?? "#38bdf8",
         bumperEnabled: input.bumperEnabled ?? true,
         bumperDurationSeconds: input.bumperDurationSeconds ?? 4,
-        workflow: [],
+        bumperTitle: input.bumperTitle ?? input.name,
+        bumperTagline: input.bumperTagline,
         status: "draft",
         createdAt: new Date(),
       };
@@ -160,6 +158,82 @@ export class FileBackend implements DbBackend {
         "assets",
         assets.filter((a) => a.projectId !== id),
       );
+      const videos = await readCollection<ProjectVideoRecord>("videos");
+      await writeCollection(
+        "videos",
+        videos.filter((v) => v.projectId !== id),
+      );
+      return changed;
+    });
+  }
+
+  async createVideo(input: CreateProjectVideoInput): Promise<ProjectVideoRecord> {
+    return withLock(async () => {
+      const videos = await readCollection<ProjectVideoRecord>("videos");
+      const now = new Date();
+      const record: ProjectVideoRecord = {
+        id: uid("vid"),
+        projectId: input.projectId,
+        name: input.name,
+        prompt: input.prompt,
+        voiceOption: input.voiceOption,
+        platforms: input.platforms,
+        workflow: input.workflow ?? [],
+        status: input.status ?? "draft",
+        createdAt: now,
+        updatedAt: now,
+      };
+      videos.push(record);
+      await writeCollection("videos", videos);
+      return record;
+    });
+  }
+
+  async listVideosByProject(projectId: string): Promise<ProjectVideoRecord[]> {
+    const videos = await readCollection<ProjectVideoRecord>("videos");
+    return videos
+      .filter((v) => v.projectId === projectId)
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+  }
+
+  async getVideo(id: string): Promise<ProjectVideoRecord | null> {
+    const videos = await readCollection<ProjectVideoRecord>("videos");
+    return videos.find((v) => v.id === id) ?? null;
+  }
+
+  async updateVideo(
+    id: string,
+    patch: Partial<Omit<ProjectVideoRecord, "id" | "projectId" | "createdAt">>,
+  ): Promise<ProjectVideoRecord | null> {
+    return withLock(async () => {
+      const videos = await readCollection<ProjectVideoRecord>("videos");
+      const idx = videos.findIndex((v) => v.id === id);
+      if (idx === -1) return null;
+      videos[idx] = { ...videos[idx], ...patch, updatedAt: new Date() };
+      await writeCollection("videos", videos);
+      return videos[idx];
+    });
+  }
+
+  async deleteVideo(id: string): Promise<boolean> {
+    return withLock(async () => {
+      const videos = await readCollection<ProjectVideoRecord>("videos");
+      const next = videos.filter((v) => v.id !== id);
+      const changed = next.length !== videos.length;
+      if (changed) await writeCollection("videos", next);
+      const assets = await readCollection<AssetRecord>("assets");
+      await writeCollection(
+        "assets",
+        assets.filter((a) => a.videoId !== id),
+      );
+      const jobs = await readCollection<JobRecord>("jobs");
+      await writeCollection(
+        "jobs",
+        jobs.filter((j) => j.videoId !== id),
+      );
       return changed;
     });
   }
@@ -170,6 +244,7 @@ export class FileBackend implements DbBackend {
       const record: JobRecord = {
         id: uid("job"),
         projectId: input.projectId,
+        videoId: input.videoId,
         type: input.type,
         status: "queued",
         progress: 0,
@@ -198,8 +273,23 @@ export class FileBackend implements DbBackend {
       );
   }
 
+  async listJobsByVideo(videoId: string): Promise<JobRecord[]> {
+    const jobs = await readCollection<JobRecord>("jobs");
+    return jobs
+      .filter((j) => j.videoId === videoId)
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+  }
+
   async getLatestJobByProject(projectId: string): Promise<JobRecord | null> {
     const jobs = await this.listJobsByProject(projectId);
+    return jobs[0] ?? null;
+  }
+
+  async getLatestJobByVideo(videoId: string): Promise<JobRecord | null> {
+    const jobs = await this.listJobsByVideo(videoId);
     return jobs[0] ?? null;
   }
 
@@ -271,17 +361,41 @@ export class FileBackend implements DbBackend {
       );
   }
 
+  async listAssetsByVideo(videoId: string): Promise<AssetRecord[]> {
+    const assets = await readCollection<AssetRecord>("assets");
+    return assets
+      .filter((a) => a.videoId === videoId)
+      .sort(
+        (a, b) =>
+          new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
+      );
+  }
+
   async getAsset(id: string): Promise<AssetRecord | null> {
     const assets = await readCollection<AssetRecord>("assets");
     return assets.find((a) => a.id === id) ?? null;
   }
 
-  async deleteAssetsByProject(projectId: string): Promise<void> {
+  async updateAsset(
+    id: string,
+    patch: Partial<Omit<AssetRecord, "id" | "createdAt">>,
+  ): Promise<AssetRecord | null> {
+    return withLock(async () => {
+      const assets = await readCollection<AssetRecord>("assets");
+      const idx = assets.findIndex((a) => a.id === id);
+      if (idx === -1) return null;
+      assets[idx] = { ...assets[idx], ...patch };
+      await writeCollection("assets", assets);
+      return assets[idx];
+    });
+  }
+
+  async deleteAssetsByVideo(videoId: string): Promise<void> {
     await withLock(async () => {
       const assets = await readCollection<AssetRecord>("assets");
       await writeCollection(
         "assets",
-        assets.filter((a) => a.projectId !== projectId),
+        assets.filter((a) => a.videoId !== videoId),
       );
     });
   }
