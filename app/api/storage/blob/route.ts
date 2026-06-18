@@ -22,13 +22,17 @@ export async function GET(req: NextRequest) {
     const buffer = await readAsset(url);
     const contentType = contentTypeFromUrl(url);
     const download = req.nextUrl.searchParams.get("download") === "1";
+    const cacheBust = req.nextUrl.searchParams.has("v");
     const name =
       req.nextUrl.searchParams.get("name")?.replace(/"/g, "") ?? "asset";
+
+    const noCache =
+      cacheBust || contentType.startsWith("video/");
 
     const headers: Record<string, string> = {
       "Content-Type": contentType,
       "Content-Length": String(buffer.length),
-      "Cache-Control": "private, max-age=3600",
+      "Cache-Control": noCache ? "private, no-cache" : "private, max-age=3600",
     };
     if (download) {
       headers["Content-Disposition"] = `attachment; filename="${name}"`;

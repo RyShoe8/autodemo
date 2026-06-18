@@ -23,11 +23,14 @@ export function ProjectBumperPanel({
   projectId,
   initialBumperUrl,
   embedded = false,
+  onBeforeGenerate,
 }: {
   projectId: string;
   initialBumperUrl?: string;
   /** When true, omit outer Card wrapper (e.g. inside branding form). */
   embedded?: boolean;
+  /** Optional branding snapshot to persist before enqueueing render_bumper. */
+  onBeforeGenerate?: () => Promise<Record<string, unknown> | void>;
 }) {
   const router = useRouter();
   const bumperFileRef = useRef<HTMLInputElement>(null);
@@ -45,6 +48,9 @@ export function ProjectBumperPanel({
 
   useEffect(() => {
     setBumperUrl(initialBumperUrl);
+    if (initialBumperUrl) {
+      setPreviewVersion(Date.now());
+    }
   }, [initialBumperUrl]);
 
   useEffect(() => {
@@ -74,10 +80,13 @@ export function ProjectBumperPanel({
 
   async function generateBumper() {
     setStarting(true);
+    setPreviewVersion(Date.now());
     try {
+      const branding = onBeforeGenerate ? await onBeforeGenerate() : undefined;
       await api.post("/api/generate", {
         projectId,
         type: "render_bumper",
+        ...(branding ?? {}),
       });
       toast.success("Bumper generation started");
       router.refresh();
@@ -180,6 +189,7 @@ export function ProjectBumperPanel({
 
       {previewSrc && (
         <video
+          key={previewSrc}
           src={previewSrc}
           controls
           className="aspect-video w-full rounded-lg border bg-black"

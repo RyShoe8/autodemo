@@ -41,7 +41,8 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const { projectId, videoId, type } = parsed.data;
+  const { projectId, videoId, type, bumperTitle, bumperTagline, brandColor, bumperDurationSeconds } =
+    parsed.data;
 
   try {
     const project = await db.getProject(projectId);
@@ -88,7 +89,20 @@ export async function POST(req: NextRequest) {
     if (type === "discover") {
       await db.updateProject(projectId, { status: "discovering" });
     } else if (type === "render_bumper") {
-      /* project status unchanged */
+      const brandingPatch: Parameters<typeof db.updateProject>[1] = {};
+      if (bumperTitle !== undefined) {
+        brandingPatch.bumperTitle = bumperTitle.trim() || project.name;
+      }
+      if (bumperTagline !== undefined) {
+        brandingPatch.bumperTagline = bumperTagline.trim();
+      }
+      if (brandColor !== undefined) brandingPatch.brandColor = brandColor;
+      if (bumperDurationSeconds !== undefined) {
+        brandingPatch.bumperDurationSeconds = bumperDurationSeconds;
+      }
+      if (Object.keys(brandingPatch).length > 0) {
+        await db.updateProject(projectId, brandingPatch);
+      }
     } else if (videoId) {
       await db.updateVideo(videoId, {
         status: type === "build_workflow" ? "building_workflow" : "recording",

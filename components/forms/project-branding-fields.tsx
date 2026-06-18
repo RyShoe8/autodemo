@@ -40,6 +40,7 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
   initialLogoUrl,
   initialBumperUrl,
   onLogoChange,
+  onBeforeGenerate,
 }: {
   control: Control<T>;
   register: UseFormRegister<T>;
@@ -48,6 +49,7 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
   initialLogoUrl?: string;
   initialBumperUrl?: string;
   onLogoChange?: (url: string) => void;
+  onBeforeGenerate?: () => Promise<Record<string, unknown> | void>;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
   const [logoUrl, setLogoUrl] = useState(initialLogoUrl);
@@ -219,6 +221,7 @@ export function ProjectBrandingFields<T extends BrandingFormFields>({
             projectId={projectId}
             initialBumperUrl={initialBumperUrl}
             embedded
+            onBeforeGenerate={onBeforeGenerate}
           />
         )}
       </CardContent>

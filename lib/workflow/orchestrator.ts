@@ -142,11 +142,15 @@ async function runBuildWorkflow(
 
 async function runRenderBumper(ctx: PipelineContext, project: ProjectRecord) {
   await ctx.setStatus("rendering", undefined, 10);
+
+  const fresh = await db.getProject(project.id);
+  if (!fresh) throw new Error("Project no longer exists");
+
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "autodemo-bumper-"));
   const outPath = path.join(tmpDir, "bumper.mp4");
 
-  const title = project.bumperTitle?.trim() || project.name;
-  const tagline = project.bumperTagline?.trim() || undefined;
+  const title = fresh.bumperTitle?.trim() || fresh.name;
+  const tagline = fresh.bumperTagline?.trim() || undefined;
 
   await ctx.log(
     `Rendering bumper: "${title}"${tagline ? ` / "${tagline}"` : ""}…`,
@@ -155,9 +159,9 @@ async function runRenderBumper(ctx: PipelineContext, project: ProjectRecord) {
     {
       title,
       tagline,
-      logoUrl: project.logoUrl,
-      brandColor: project.brandColor ?? "#38bdf8",
-      durationSeconds: project.bumperDurationSeconds ?? 4,
+      logoUrl: fresh.logoUrl,
+      brandColor: fresh.brandColor ?? "#38bdf8",
+      durationSeconds: fresh.bumperDurationSeconds ?? 4,
       reporter: ctx,
     },
     outPath,
@@ -165,13 +169,13 @@ async function runRenderBumper(ctx: PipelineContext, project: ProjectRecord) {
 
   const buffer = await fs.readFile(outPath);
   const { url } = await storage.save(
-    `projects/${project.id}/bumper/bumper.mp4`,
+    `projects/${fresh.id}/bumper/bumper-${ctx.jobId}.mp4`,
     buffer,
     "video/mp4",
   );
 
-  await db.updateProject(project.id, { bumperUrl: url });
-  await ctx.log(`Bumper saved (${project.bumperDurationSeconds ?? 4}s).`);
+  await db.updateProject(fresh.id, { bumperUrl: url });
+  await ctx.log(`Bumper saved (${fresh.bumperDurationSeconds ?? 4}s).`);
   await ctx.setStatus("completed", undefined, 100);
   await db.updateJob(ctx.jobId, {
     completedAt: new Date(),

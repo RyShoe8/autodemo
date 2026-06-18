@@ -127,6 +127,13 @@ export const generateSchema = z.object({
   type: z
     .enum(["discover", "build_workflow", "produce", "render_bumper"])
     .default("discover"),
+  bumperTitle: z.string().max(120).optional(),
+  bumperTagline: z.string().max(200).optional(),
+  brandColor: z
+    .string()
+    .regex(/^#[0-9A-Fa-f]{6}$/, "Enter a valid hex color")
+    .optional(),
+  bumperDurationSeconds: z.number().min(2).max(8).optional(),
 });
 
 export const workflowActionRequestSchema = z.object({

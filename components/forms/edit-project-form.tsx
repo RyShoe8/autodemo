@@ -32,6 +32,7 @@ export function EditProjectForm({ project }: { project: ProjectDTO }) {
     register,
     handleSubmit,
     control,
+    getValues,
     formState: { errors },
   } = useForm<UpdateProjectValues>({
     resolver: zodResolver(updateProjectSchema),
@@ -118,6 +119,15 @@ export function EditProjectForm({ project }: { project: ProjectDTO }) {
         projectId={project.id}
         initialLogoUrl={project.logoUrl}
         initialBumperUrl={project.bumperUrl}
+        onBeforeGenerate={async () => {
+          const values = getValues();
+          return {
+            bumperTitle: values.bumperTitle,
+            bumperTagline: values.bumperTagline,
+            brandColor: values.brandColor,
+            bumperDurationSeconds: values.bumperDurationSeconds,
+          };
+        }}
       />
 
       <div className="flex justify-end gap-2">
