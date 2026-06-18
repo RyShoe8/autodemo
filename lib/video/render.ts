@@ -28,32 +28,33 @@ export interface RenderBuildInput {
   script: Script;
   scenes: CapturedScene[];
   voice: VoiceResult;
-  /** Absolute local path to session.mp4 (not a blob URL or data URI). */
-  rawVideoPath?: string;
+  /** staticFile() URL for session.mp4 staged in the bundle public folder. */
+  videoSrc?: string;
   branding: RenderBranding;
   reporter: Reporter;
 }
 
 const globalForRender = globalThis as unknown as { __remotionBundle__?: string };
 
+/** Bundle Remotion and return the output directory (used as serveUrl). */
 export async function ensureBundle(reporter: Reporter): Promise<string> {
   if (globalForRender.__remotionBundle__) return globalForRender.__remotionBundle__;
   const { bundle } = await import("@remotion/bundler");
   await reporter.log("Bundling Remotion composition…");
   const entry = path.join(process.cwd(), "lib", "remotion", "entry.ts");
-  const serveUrl = await bundle({
+  const bundleDir = await bundle({
     entryPoint: entry,
     onProgress: () => {},
   });
-  globalForRender.__remotionBundle__ = serveUrl;
-  return serveUrl;
+  globalForRender.__remotionBundle__ = bundleDir;
+  return bundleDir;
 }
 
 /** Build the 16:9 master composition props from the pipeline artifacts. */
 export async function buildBaseProps(
   input: RenderBuildInput,
 ): Promise<DemoVideoProps> {
-  const { script, scenes, voice, rawVideoPath, branding } = input;
+  const { script, scenes, voice, videoSrc, branding } = input;
   const segments = voice.segments;
   const introFrames = Math.round((segments[0]?.durationSeconds ?? 5) * RENDER_FPS);
   const outroFrames = Math.round(
@@ -63,7 +64,6 @@ export async function buildBaseProps(
     ? Math.round(branding.bumperDurationSeconds * RENDER_FPS)
     : 0;
 
-  const videoSrc = rawVideoPath;
   const logoSrc = branding.logoUrl
     ? await toDataUri(branding.logoUrl)
     : undefined;

@@ -13,7 +13,13 @@ import { generateVoice } from "@/lib/video/voice";
 import { generateCaptions } from "@/lib/video/captions";
 import { generateThumbnail } from "@/lib/video/thumbnail";
 import { resolveVideoToLocalFile } from "@/lib/video/media-resolve";
-import { buildBaseProps, renderBumperToFile, renderToFile } from "@/lib/video/render";
+import { stageVideoInRemotionBundle } from "@/lib/video/remotion-assets";
+import {
+  buildBaseProps,
+  ensureBundle,
+  renderBumperToFile,
+  renderToFile,
+} from "@/lib/video/render";
 import { exportPlatform } from "@/lib/ffmpeg/export";
 import { enrichWorkflowSteps } from "@/lib/playwright/step-resolver";
 import { createLogger } from "@/lib/logger";
@@ -248,11 +254,22 @@ async function runProduce(
     );
   }
 
+  const bundleDir = await ensureBundle(ctx);
+  let videoSrc: string | undefined;
+  if (rawVideoPath) {
+    videoSrc = await stageVideoInRemotionBundle(
+      bundleDir,
+      rawVideoPath,
+      `session-${ctx.jobId}.mp4`,
+    );
+    await ctx.log("Staged screen recording in Remotion bundle.");
+  }
+
   const baseProps = await buildBaseProps({
     script,
     scenes: recording.scenes,
     voice,
-    rawVideoPath,
+    videoSrc,
     branding: {
       logoUrl: project.logoUrl,
       brandColor: project.brandColor ?? "#38bdf8",
