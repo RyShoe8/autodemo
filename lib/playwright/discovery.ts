@@ -311,6 +311,8 @@ export async function captureScreenshots(
 export async function extractInteractives(
   page: Page,
 ): Promise<InteractiveElement[]> {
+  // page.evaluate callbacks must not use `function` declarations — tsx/esbuild
+  // injects __name(), which is undefined in the browser sandbox.
   return page.evaluate(() => {
     const seen = new Set<string>();
     const out: { role: string; name: string; tag: string }[] = [];
@@ -324,7 +326,7 @@ export async function extractInteractives(
       '[role="tab"]',
     ];
 
-    function accessibleName(el: Element): string {
+    const accessibleName = (el: Element): string => {
       const aria = el.getAttribute("aria-label");
       if (aria) return aria.trim();
       const labelled = el.getAttribute("aria-labelledby");
@@ -336,14 +338,14 @@ export async function extractInteractives(
       if (text) return text.slice(0, 60);
       const placeholder = (el as HTMLInputElement).placeholder;
       return placeholder?.trim().slice(0, 60) ?? "";
-    }
+    };
 
-    function isVisible(el: Element): boolean {
+    const isVisible = (el: Element): boolean => {
       const html = el as HTMLElement;
       if (!html.offsetParent && html.tagName !== "BODY") return false;
       const style = window.getComputedStyle(html);
       return style.visibility !== "hidden" && style.display !== "none";
-    }
+    };
 
     for (const sel of selectors) {
       document.querySelectorAll(sel).forEach((el) => {
@@ -402,6 +404,22 @@ export async function extractVisibleText(page: Page): Promise<string[]> {
     }
     return Array.from(new Set(out));
   });
+}
+
+function discoveryFailureHint(err: unknown, detail: string): string {
+  if (isBlobStorageError(err)) {
+    return "Check BLOB_READ_WRITE_TOKEN and BLOB_ACCESS match your Vercel Blob store.";
+  }
+  if (
+    detail.includes("__name is not defined") ||
+    detail.includes("page.evaluate")
+  ) {
+    return "An internal browser-script error occurred during discovery. Redeploy the latest worker build.";
+  }
+  if (/launch|executable|playwright install|browserType/i.test(detail)) {
+    return "Deploy the standalone worker with Playwright (Dockerfile or npx playwright install chromium).";
+  }
+  return "Ensure the target URL is reachable from the worker network.";
 }
 
 /**
@@ -509,9 +527,7 @@ export async function discoverApplication(
     await reporter.log(`Discovery via browser failed (${detail}).`);
     if (browser) await browser.close().catch(() => {});
 
-    const hint = isBlobStorageError(err)
-      ? "Check BLOB_READ_WRITE_TOKEN and BLOB_ACCESS match your Vercel Blob store."
-      : "Deploy the standalone worker with Playwright (Dockerfile or npx playwright install chromium) and ensure the target URL is reachable from the worker network.";
+    const hint = discoveryFailureHint(err, detail);
 
     throw new Error(`Browser discovery failed: ${detail}. ${hint}`);
   }
