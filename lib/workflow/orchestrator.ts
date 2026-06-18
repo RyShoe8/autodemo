@@ -255,21 +255,24 @@ async function runProduce(
   }
 
   const bundleDir = await ensureBundle(ctx);
-  let videoSrc: string | undefined;
+  let videoAssetName: string | undefined;
   if (rawVideoPath) {
-    videoSrc = await stageVideoInRemotionBundle(
+    const staged = await stageVideoInRemotionBundle(
       bundleDir,
       rawVideoPath,
       `session-${ctx.jobId}.mp4`,
     );
-    await ctx.log("Staged screen recording in Remotion bundle.");
+    videoAssetName = staged.assetName;
+    await ctx.log(
+      `Staged screen recording at ${staged.staticUrl} (${Math.round(staged.sizeInBytes / 1024)} KB).`,
+    );
   }
 
   const baseProps = await buildBaseProps({
     script,
     scenes: recording.scenes,
     voice,
-    videoSrc,
+    videoAssetName,
     branding: {
       logoUrl: project.logoUrl,
       brandColor: project.brandColor ?? "#38bdf8",

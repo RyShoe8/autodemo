@@ -5,7 +5,8 @@ export interface RemotionScene {
   heading: string;
   narration: string;
   durationInFrames: number;
-  videoSrc?: string;
+  /** Filename under bundle public/ — resolved via staticFile() in the composition. */
+  videoAssetName?: string;
   videoStartMs?: number;
   videoEndMs?: number;
   transition?: SceneTransition;

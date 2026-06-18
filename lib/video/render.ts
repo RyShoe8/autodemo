@@ -28,8 +28,8 @@ export interface RenderBuildInput {
   script: Script;
   scenes: CapturedScene[];
   voice: VoiceResult;
-  /** staticFile() URL for session.mp4 staged in the bundle public folder. */
-  videoSrc?: string;
+  /** Filename staged in the bundle public folder (resolved via staticFile in composition). */
+  videoAssetName?: string;
   branding: RenderBranding;
   reporter: Reporter;
 }
@@ -54,7 +54,7 @@ export async function ensureBundle(reporter: Reporter): Promise<string> {
 export async function buildBaseProps(
   input: RenderBuildInput,
 ): Promise<DemoVideoProps> {
-  const { script, scenes, voice, videoSrc, branding } = input;
+  const { script, scenes, voice, videoAssetName, branding } = input;
   const segments = voice.segments;
   const introFrames = Math.round((segments[0]?.durationSeconds ?? 5) * RENDER_FPS);
   const outroFrames = Math.round(
@@ -94,7 +94,7 @@ export async function buildBaseProps(
         RENDER_FPS,
         Math.round(clipDuration * RENDER_FPS),
       ),
-      videoSrc,
+      videoAssetName,
       videoStartMs: scene.videoStartMs,
       videoEndMs: scene.videoEndMs,
       transition: transitionForIndex(i),

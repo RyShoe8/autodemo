@@ -5,6 +5,7 @@ import {
   Img,
   OffthreadVideo,
   Sequence,
+  staticFile,
   interpolate,
   spring,
   useCurrentFrame,
@@ -102,7 +103,7 @@ function SceneMedia({
   const { opacity, transform } = transitionStyle(transition, frame, duration);
 
   const hasVideo =
-    scene.videoSrc &&
+    scene.videoAssetName &&
     scene.videoStartMs !== undefined &&
     scene.videoEndMs !== undefined;
 
@@ -110,7 +111,7 @@ function SceneMedia({
     const startFrame = Math.round((scene.videoStartMs! / 1000) * fps);
     return (
       <OffthreadVideo
-        src={scene.videoSrc!}
+        src={staticFile(scene.videoAssetName!)}
         startFrom={startFrame}
         style={{
           width: "100%",
