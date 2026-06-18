@@ -1,15 +1,38 @@
 import { db } from "@/lib/db";
 import { createLogger } from "@/lib/logger";
 import {
-  ACTIVE_JOB_STATUSES,
   WORKER_INTERRUPTED,
 } from "@/lib/workflow/job-status";
 
 const log = createLogger("worker");
 
-const IN_PROGRESS_STATUSES = ACTIVE_JOB_STATUSES.filter(
-  (status) => status !== "queued",
-);
+export async function interruptJob(job: {
+  id: string;
+  type: string;
+  status: string;
+  projectId: string;
+  videoId?: string;
+}): Promise<void> {
+  const completedAt = new Date();
+  const logLine = `[${completedAt.toISOString()}] ${WORKER_INTERRUPTED}.`;
+
+  await db.updateJob(job.id, {
+    status: "failed",
+    error: WORKER_INTERRUPTED,
+    completedAt,
+  });
+  await db.appendJobLog(job.id, logLine);
+
+  if (job.videoId) {
+    await db.updateVideo(job.videoId, { status: "failed" });
+  } else {
+    await db.updateProject(job.projectId, { status: "failed" });
+  }
+
+  log.warn(
+    `Interrupted job ${job.id} (${job.type}, was ${job.status}) for project ${job.projectId}`,
+  );
+}
 
 /**
  * A freshly started worker cannot be running a job yet. Any in-progress job
@@ -19,26 +42,8 @@ export async function recoverOrphanedJobsOnStartup(): Promise<number> {
   const orphans = await db.listInProgressJobs();
   if (orphans.length === 0) return 0;
 
-  const completedAt = new Date();
-  const logLine = `[${completedAt.toISOString()}] ${WORKER_INTERRUPTED}.`;
-
   for (const job of orphans) {
-    await db.updateJob(job.id, {
-      status: "failed",
-      error: WORKER_INTERRUPTED,
-      completedAt,
-    });
-    await db.appendJobLog(job.id, logLine);
-
-    if (job.videoId) {
-      await db.updateVideo(job.videoId, { status: "failed" });
-    } else {
-      await db.updateProject(job.projectId, { status: "failed" });
-    }
-
-    log.warn(
-      `Recovered orphaned job ${job.id} (${job.type}, was ${job.status}) for project ${job.projectId}`,
-    );
+    await interruptJob(job);
   }
 
   log.info(

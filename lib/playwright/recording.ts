@@ -58,6 +58,8 @@ export async function captureStep(
   const resolved = resolveStep(step, applicationMap);
   const urlBefore = page.url();
 
+  await reporter.log(`Executing ${step.actionType} for "${step.title}"…`);
+
   try {
     switch (step.actionType) {
       case "navigate": {

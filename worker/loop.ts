@@ -5,11 +5,13 @@ import { storage } from "@/lib/storage";
 import { createLogger } from "@/lib/logger";
 import { sleep } from "@/lib/utils";
 import { loadBrowserFnForVerify } from "@/lib/playwright/browser-eval/run";
-import { recoverOrphanedJobsOnStartup } from "@/lib/workflow/recover-orphaned-jobs";
+import { recoverOrphanedJobsOnStartup, interruptJob } from "@/lib/workflow/recover-orphaned-jobs";
+import type { JobRecord } from "@/lib/db/types";
 
 const log = createLogger("worker");
 
 let running = true;
+let currentJob: JobRecord | null = null;
 
 function verifyBrowserEvalLoader(): void {
   const scripts = [
@@ -69,6 +71,15 @@ export async function runWorker(): Promise<void> {
     if (!running) return;
     log.info("Shutdown signal received — finishing current job then exiting.");
     running = false;
+    if (currentJob) {
+      const job = currentJob;
+      void interruptJob(job).catch((err) => {
+        log.error(
+          `Failed to interrupt job ${job.id} on shutdown`,
+          err instanceof Error ? err.message : err,
+        );
+      });
+    }
   };
   process.on("SIGINT", shutdown);
   process.on("SIGTERM", shutdown);
@@ -78,8 +89,13 @@ export async function runWorker(): Promise<void> {
       const job = await db.claimNextJob();
       if (job) {
         log.info(`Claimed job ${job.id} (${job.type}) for project ${job.projectId}`);
-        await runJob(job);
-        log.info(`Finished job ${job.id}`);
+        currentJob = job;
+        try {
+          await runJob(job);
+          log.info(`Finished job ${job.id}`);
+        } finally {
+          currentJob = null;
+        }
         // Immediately check for more work without sleeping.
         continue;
       }
