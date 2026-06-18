@@ -3,7 +3,13 @@ import { isBlobStorageError } from "@/lib/storage/blob-utils";
 import { storage } from "@/lib/storage";
 import { placeholderScreenshotSVG } from "@/lib/media/placeholder";
 import { login } from "@/lib/playwright/discovery";
-import { navigateAndWait } from "@/lib/playwright/spa";
+import { navigateAndWait, waitForAppReady } from "@/lib/playwright/spa";
+import {
+  clickResolved,
+  highlightResolved,
+  resolveStep,
+  typeResolved,
+} from "@/lib/playwright/step-resolver";
 import type { Reporter } from "@/lib/workflow/context";
 import type {
   ApplicationMap,
@@ -28,35 +34,59 @@ function estimateDuration(step: WorkflowStep): number {
   return base + extra;
 }
 
+async function waitForSpaUpdate(page: Page, urlBefore: string): Promise<void> {
+  await waitForAppReady(page);
+  if (page.url() === urlBefore) {
+    await page.waitForTimeout(800);
+  }
+}
+
 /** Execute a single workflow step against the live page. */
 export async function captureStep(
   page: Page,
   step: WorkflowStep,
   origin: string,
   reporter: Reporter,
+  applicationMap?: ApplicationMap,
 ): Promise<void> {
+  const resolved = resolveStep(step, applicationMap);
+  const urlBefore = page.url();
+
   try {
     switch (step.actionType) {
       case "navigate": {
-        const target = step.url
-          ? new URL(step.url, origin).toString()
+        const target = resolved.url
+          ? new URL(resolved.url, origin).toString()
           : origin;
         await navigateAndWait(page, target);
         break;
       }
       case "click": {
-        if (step.selector) {
-          await page.locator(step.selector).first().click({ timeout: 8000 });
+        const result = await clickResolved(page, resolved, step, applicationMap);
+        if (!result.success) {
+          await reporter.log(
+            `Step "${step.title}": no click target found — skipping interaction.`,
+          );
+        } else {
+          await reporter.log(
+            `Step "${step.title}": click via ${result.strategy}.`,
+          );
           await page.waitForLoadState("networkidle").catch(() => {});
+          await waitForSpaUpdate(page, urlBefore);
         }
         break;
       }
       case "type": {
-        if (step.selector) {
-          await page
-            .locator(step.selector)
-            .first()
-            .fill(step.value ?? "Sample input", { timeout: 8000 });
+        const result = await typeResolved(page, resolved, step);
+        if (!result.success) {
+          await reporter.log(
+            `Step "${step.title}": no input field found — skipping type.`,
+          );
+        } else {
+          await reporter.log(
+            `Step "${step.title}": type via ${result.strategy}.`,
+          );
+          await waitForSpaUpdate(page, urlBefore);
         }
         break;
       }
@@ -65,15 +95,16 @@ export async function captureStep(
         break;
       }
       case "highlight": {
-        if (step.selector) {
-          await page
-            .locator(step.selector)
-            .first()
-            .evaluate((el) => {
-              (el as HTMLElement).style.outline = "3px solid #38bdf8";
-              (el as HTMLElement).scrollIntoView({ block: "center" });
-            })
-            .catch(() => {});
+        const result = await highlightResolved(
+          page,
+          resolved,
+          step,
+          applicationMap,
+        );
+        if (result.success && result.strategy) {
+          await reporter.log(
+            `Step "${step.title}": highlight via ${result.strategy}.`,
+          );
         }
         break;
       }
@@ -85,7 +116,7 @@ export async function captureStep(
       default:
         break;
     }
-    await page.waitForTimeout(400);
+    await page.waitForTimeout(1200);
   } catch (err) {
     await reporter.log(
       `Step "${step.title}" action issue: ${err instanceof Error ? err.message : String(err)} (captured current state).`,
@@ -154,7 +185,7 @@ async function buildMockScenes(
 export async function executeWorkflow(
   opts: RecordOptions,
 ): Promise<RecordingResult> {
-  const { reporter, projectId, url, email, password } = opts;
+  const { reporter, projectId, url, email, password, applicationMap } = opts;
   const enabledSteps = opts.workflow
     .filter((s) => s.enabled)
     .sort((a, b) => a.order - b.order);
@@ -177,13 +208,20 @@ export async function executeWorkflow(
     const origin = new URL(url).origin;
 
     await navigateAndWait(page, url);
-    await login(page, email, password, reporter);
+    const loggedIn = await login(page, email, password, reporter);
+    if (!loggedIn) {
+      await reporter.log(
+        "WARNING: Recording without authenticated session — scenes may show login or public pages only.",
+      );
+    }
 
     const scenes: CapturedScene[] = [];
     for (let i = 0; i < enabledSteps.length; i++) {
       const step = enabledSteps[i];
-      await reporter.log(`Recording step ${i + 1}/${enabledSteps.length}: ${step.title}`);
-      await captureStep(page, step, origin, reporter);
+      await reporter.log(
+        `Recording step ${i + 1}/${enabledSteps.length}: ${step.title}`,
+      );
+      await captureStep(page, step, origin, reporter, applicationMap);
       const scene = await recordScene(page, step, projectId, i);
       scenes.push(scene);
     }

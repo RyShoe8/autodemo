@@ -14,6 +14,10 @@ export interface ExportInput {
   baseProps: DemoVideoProps;
   platform: Platform;
   reporter: Reporter;
+  /** Storage key when multiple platforms share the same render (e.g. "1920x1080"). */
+  variantKey?: string;
+  /** Override max trim duration when platforms in a variant group differ. */
+  maxSeconds?: number;
 }
 
 let ffmpegAvailable: boolean | null = null;
@@ -42,10 +46,12 @@ async function tmpFile(suffix: string): Promise<string> {
 function buildVariantProps(
   baseProps: DemoVideoProps,
   platform: Platform,
+  maxSecondsOverride?: number,
 ): DemoVideoProps {
   const spec = PLATFORM_SPECS[platform];
+  const cap = maxSecondsOverride ?? spec.maxSeconds;
   const master = masterDurationSeconds(baseProps);
-  const target = Math.max(spec.minSeconds, Math.min(spec.maxSeconds, master));
+  const target = Math.max(spec.minSeconds, Math.min(cap, master));
   const factor = master > 0 ? target / master : 1;
   const scale = (frames: number) =>
     Math.max(RENDER_FPS, Math.round(frames * factor));
@@ -68,6 +74,7 @@ async function ffmpegTransform(input: ExportInput): Promise<string> {
   if (process.env.FFMPEG_PATH) ffmpeg.setFfmpegPath(process.env.FFMPEG_PATH);
 
   const spec = PLATFORM_SPECS[input.platform];
+  const cap = input.maxSeconds ?? spec.maxSeconds;
   const out = await tmpFile(".mp4");
   const master = masterDurationSeconds(input.baseProps);
   const filter = `scale=${spec.width}:${spec.height}:force_original_aspect_ratio=decrease,pad=${spec.width}:${spec.height}:(ow-iw)/2:(oh-ih)/2:color=black`;
@@ -82,8 +89,8 @@ async function ffmpegTransform(input: ExportInput): Promise<string> {
         "-movflags +faststart",
         "-c:a aac",
       ]);
-    if (master > spec.maxSeconds) {
-      command = command.duration(spec.maxSeconds);
+    if (master > cap) {
+      command = command.duration(cap);
     }
     command
       .on("end", () => resolve())
@@ -125,8 +132,9 @@ export async function exportPlatform(input: ExportInput): Promise<string> {
   }
 
   const buffer = await fs.readFile(filePath);
+  const storageKey = input.variantKey ?? platform;
   const { url } = await storage.save(
-    `projects/${projectId}/exports/${platform}.mp4`,
+    `projects/${projectId}/exports/${storageKey}.mp4`,
     buffer,
     "video/mp4",
   );
@@ -138,7 +146,11 @@ export async function exportPlatform(input: ExportInput): Promise<string> {
 }
 
 async function renderVariantWithRemotion(input: ExportInput): Promise<string> {
-  const props = buildVariantProps(input.baseProps, input.platform);
+  const props = buildVariantProps(
+    input.baseProps,
+    input.platform,
+    input.maxSeconds,
+  );
   const out = await tmpFile(".mp4");
   await renderToFile(props, out, input.reporter);
   return out;

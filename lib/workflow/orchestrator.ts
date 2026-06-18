@@ -8,14 +8,20 @@ import { PipelineContext } from "@/lib/workflow/context";
 import { discoverApplication } from "@/lib/playwright/discovery";
 import { executeWorkflow } from "@/lib/playwright/recording";
 import { generateWorkflow } from "@/lib/openai/workflow";
-import { generateScript } from "@/lib/openai/script";
+import { generateScript, buildTemplateScript } from "@/lib/openai/script";
 import { generateVoice } from "@/lib/video/voice";
 import { generateCaptions } from "@/lib/video/captions";
 import { generateThumbnail } from "@/lib/video/thumbnail";
 import { buildBaseProps, renderToFile } from "@/lib/video/render";
 import { exportPlatform } from "@/lib/ffmpeg/export";
+import { enrichWorkflowSteps } from "@/lib/playwright/step-resolver";
 import { createLogger } from "@/lib/logger";
-import { PLATFORM_SPECS, type Platform } from "@/types";
+import {
+  PLATFORM_SPECS,
+  exportVariantKey,
+  exportVariantMaxSeconds,
+  type Platform,
+} from "@/types";
 import type { JobRecord, ProjectRecord } from "@/lib/db/types";
 
 const log = createLogger("orchestrator");
@@ -87,7 +93,11 @@ async function runDiscover(ctx: PipelineContext, project: ProjectRecord) {
 }
 
 async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
-  const workflow = (project.workflow ?? []).filter((s) => s.enabled);
+  const enrichedWorkflow = enrichWorkflowSteps(
+    project.workflow ?? [],
+    project.applicationMap,
+  );
+  const workflow = enrichedWorkflow.filter((s) => s.enabled);
   if (workflow.length === 0) {
     throw new Error("No enabled workflow steps to record.");
   }
@@ -100,7 +110,7 @@ async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
     url: project.url,
     email: project.loginEmail,
     password,
-    workflow: project.workflow ?? [],
+    workflow: enrichedWorkflow,
     applicationMap: project.applicationMap,
     reporter: ctx,
   });
@@ -109,12 +119,19 @@ async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
 
   // 2. Script
   await ctx.setStatus("generating_script", "recording", 35);
-  const script = await generateScript({
+  const scriptInput = {
     prompt: project.prompt,
     projectName: project.name,
     steps: workflow,
     reporter: ctx,
-  });
+  };
+  let script;
+  if (project.voiceOption === "no_audio") {
+    await ctx.log("Script: template (no OpenAI call — no audio).");
+    script = buildTemplateScript(scriptInput);
+  } else {
+    script = await generateScript(scriptInput);
+  }
 
   // 3. Audio
   await ctx.setStatus("generating_audio", "recording", 50);
@@ -160,13 +177,42 @@ async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
   const platforms = (project.platforms ?? []) as Platform[];
   const scriptJson = JSON.stringify(script, null, 2);
 
-  for (let i = 0; i < platforms.length; i++) {
-    const platform = platforms[i];
-    const spec = PLATFORM_SPECS[platform];
+  const variantGroups = new Map<string, Platform[]>();
+  for (const platform of platforms) {
+    const key = exportVariantKey(platform);
+    const group = variantGroups.get(key) ?? [];
+    group.push(platform);
+    variantGroups.set(key, group);
+  }
+
+  const groupEntries = Array.from(variantGroups.entries());
+  let completedGroups = 0;
+
+  for (const [variantKey, groupPlatforms] of groupEntries) {
+    const representative = groupPlatforms[0];
+    const spec = PLATFORM_SPECS[representative];
     const isPortrait = spec.height > spec.width;
+    const maxSeconds = exportVariantMaxSeconds(groupPlatforms);
+    const platformLabels = groupPlatforms
+      .map((p) => PLATFORM_SPECS[p].label)
+      .join(", ");
+
+    await ctx.log(
+      `Exporting ${variantKey} variant for ${platformLabels}…`,
+    );
+
+    const videoUrl = await exportPlatform({
+      projectId: project.id,
+      masterPath,
+      baseProps,
+      platform: representative,
+      variantKey,
+      maxSeconds,
+      reporter: ctx,
+    });
 
     const thumbnailUrl = await generateThumbnail({
-      projectId: `${project.id}/${platform}`,
+      projectId: `${project.id}/${variantKey}`,
       title: project.name,
       headline: script.title,
       baseScreenshotUrl: baseScreenshot,
@@ -175,25 +221,22 @@ async function runProduce(ctx: PipelineContext, project: ProjectRecord) {
       reporter: ctx,
     });
 
-    const videoUrl = await exportPlatform({
-      projectId: project.id,
-      masterPath,
-      baseProps,
-      platform,
-      reporter: ctx,
-    });
+    for (const platform of groupPlatforms) {
+      await db.createAsset({
+        projectId: project.id,
+        platform,
+        videoUrl,
+        audioUrl: voice.audioUrl,
+        thumbnailUrl,
+        captionUrl,
+        script: scriptJson,
+      });
+    }
 
-    await db.createAsset({
-      projectId: project.id,
-      platform,
-      videoUrl,
-      audioUrl: voice.audioUrl,
-      thumbnailUrl,
-      captionUrl,
-      script: scriptJson,
-    });
-
-    await ctx.setProgress(80 + Math.round(((i + 1) / platforms.length) * 18));
+    completedGroups += 1;
+    await ctx.setProgress(
+      80 + Math.round((completedGroups / groupEntries.length) * 18),
+    );
   }
 
   await fs.rm(masterDir, { recursive: true, force: true }).catch(() => {});

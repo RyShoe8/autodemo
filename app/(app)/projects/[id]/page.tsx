@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Film, ListChecks } from "lucide-react";
+import { Film, ListChecks, Pencil } from "lucide-react";
 import { db } from "@/lib/db";
 import { toProjectDTO } from "@/lib/serialize";
 import { PageHeader } from "@/components/layout/page-header";
@@ -26,6 +26,11 @@ export default async function ProjectDetailPage({
     <div className="mx-auto max-w-5xl">
       <PageHeader title={project.name} description={project.url}>
         <ProjectStatusBadge status={project.status} />
+        <Button asChild variant="outline">
+          <Link href={`/projects/${id}/edit`}>
+            <Pencil className="h-4 w-4" /> Edit
+          </Link>
+        </Button>
         <Button asChild variant="outline">
           <Link href={`/projects/${id}/workflow`}>
             <ListChecks className="h-4 w-4" /> Workflow

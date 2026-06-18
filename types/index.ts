@@ -26,7 +26,13 @@ export type JobStatus =
 
 export type JobType = "discover" | "produce";
 
-export type Platform = "youtube" | "linkedin" | "bluesky";
+export type Platform =
+  | "youtube"
+  | "linkedin"
+  | "x"
+  | "bluesky"
+  | "tiktok"
+  | "instagram";
 
 export type VoiceOption =
   | "openai_tts"
@@ -61,9 +67,22 @@ export interface DiscoveredPage {
   screenshot?: string;
 }
 
+export interface NavLink {
+  label: string;
+  href: string;
+}
+
+export interface InteractiveElement {
+  role: string;
+  name: string;
+  tag: string;
+}
+
 export interface ApplicationMap {
   pages: DiscoveredPage[];
   navigation: string[];
+  navLinks?: NavLink[];
+  interactives?: InteractiveElement[];
   screenshots: string[];
   uiText: string[];
 }
@@ -158,6 +177,14 @@ export const PLATFORM_SPECS: Record<Platform, PlatformSpec> = {
     maxSeconds: 90,
     label: "LinkedIn",
   },
+  x: {
+    platform: "x",
+    width: 1920,
+    height: 1080,
+    minSeconds: 15,
+    maxSeconds: 140,
+    label: "X",
+  },
   bluesky: {
     platform: "bluesky",
     width: 1080,
@@ -166,7 +193,34 @@ export const PLATFORM_SPECS: Record<Platform, PlatformSpec> = {
     maxSeconds: 60,
     label: "Bluesky",
   },
+  tiktok: {
+    platform: "tiktok",
+    width: 1080,
+    height: 1920,
+    minSeconds: 15,
+    maxSeconds: 60,
+    label: "TikTok",
+  },
+  instagram: {
+    platform: "instagram",
+    width: 1080,
+    height: 1920,
+    minSeconds: 15,
+    maxSeconds: 90,
+    label: "Instagram",
+  },
 };
+
+/** Group key for platforms that share the same render dimensions. */
+export function exportVariantKey(platform: Platform): string {
+  const { width, height } = PLATFORM_SPECS[platform];
+  return `${width}x${height}`;
+}
+
+/** Max duration (seconds) when trimming a variant shared by multiple platforms. */
+export function exportVariantMaxSeconds(platforms: Platform[]): number {
+  return Math.min(...platforms.map((p) => PLATFORM_SPECS[p].maxSeconds));
+}
 
 export const VOICE_LABELS: Record<VoiceOption, string> = {
   openai_tts: "OpenAI TTS",

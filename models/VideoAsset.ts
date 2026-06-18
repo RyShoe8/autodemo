@@ -10,7 +10,7 @@ const VideoAssetSchema = new Schema(
     },
     platform: {
       type: String,
-      enum: ["youtube", "linkedin", "bluesky"],
+      enum: ["youtube", "linkedin", "x", "bluesky", "tiktok", "instagram"],
       required: true,
     },
     videoUrl: { type: String, required: true },

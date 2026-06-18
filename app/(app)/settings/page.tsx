@@ -77,7 +77,11 @@ export default function SettingsPage() {
             <StatusRow
               label="OpenAI"
               ok={flags.hasOpenAI}
-              detail={`Model: ${env.openaiModel}`}
+              detail={
+                flags.hasOpenAI
+                  ? `Workflow: ${env.openaiModelWorkflow} · Script: ${env.openaiModelScript}`
+                  : "Workflow and script generation use deterministic templates."
+              }
             />
             <StatusRow
               label="ElevenLabs"

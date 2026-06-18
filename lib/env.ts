@@ -21,7 +21,11 @@ export const env = {
   mongodbUri: read("MONGODB_URI"),
 
   openaiApiKey: read("OPENAI_API_KEY"),
-  openaiModel: read("OPENAI_MODEL") ?? "gpt-5.5",
+  openaiModel: read("OPENAI_MODEL") ?? "gpt-4o-mini",
+  openaiModelWorkflow:
+    read("OPENAI_MODEL_WORKFLOW") ?? read("OPENAI_MODEL") ?? "gpt-4o-mini",
+  openaiModelScript:
+    read("OPENAI_MODEL_SCRIPT") ?? read("OPENAI_MODEL") ?? "gpt-4o-mini",
 
   adminPassword: read("ADMIN_PASSWORD") ?? DEV_DEFAULT_PASSWORD,
   authSecret: read("AUTH_SECRET") ?? DEV_DEFAULT_AUTH_SECRET,

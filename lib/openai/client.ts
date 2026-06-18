@@ -18,12 +18,14 @@ export function getOpenAI(): OpenAI | null {
 export async function jsonCompletion(opts: {
   system: string;
   user: string;
+  model?: string;
 }): Promise<unknown | null> {
   const openai = getOpenAI();
   if (!openai) return null;
+  const model = opts.model ?? env.openaiModel;
   try {
     const completion = await openai.chat.completions.create({
-      model: env.openaiModel,
+      model,
       messages: [
         { role: "system", content: opts.system },
         { role: "user", content: opts.user },

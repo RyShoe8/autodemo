@@ -141,8 +141,11 @@ function Scene({
             style={{
               width: "100%",
               height: "100%",
-              objectFit: "cover",
-              transform: `scale(${zoom}) translateX(${panX}px)`,
+              objectFit: isPortrait ? "contain" : "cover",
+              backgroundColor: isPortrait ? "#05070d" : undefined,
+              transform: isPortrait
+                ? undefined
+                : `scale(${zoom}) translateX(${panX}px)`,
             }}
           />
         </div>

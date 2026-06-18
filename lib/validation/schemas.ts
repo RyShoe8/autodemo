@@ -1,6 +1,13 @@
 import { z } from "zod";
 
-export const platformEnum = z.enum(["youtube", "linkedin", "bluesky"]);
+export const platformEnum = z.enum([
+  "youtube",
+  "linkedin",
+  "x",
+  "bluesky",
+  "tiktok",
+  "instagram",
+]);
 
 export const voiceEnum = z.enum([
   "openai_tts",
@@ -40,6 +47,13 @@ export const createProjectSchema = z.object({
 
 export type CreateProjectValues = z.input<typeof createProjectSchema>;
 export type CreateProjectParsed = z.output<typeof createProjectSchema>;
+
+export const updateProjectSchema = createProjectSchema.partial().extend({
+  loginPassword: z.string().max(500).optional(),
+});
+
+export type UpdateProjectValues = z.input<typeof updateProjectSchema>;
+export type UpdateProjectParsed = z.output<typeof updateProjectSchema>;
 
 export const workflowStepSchema = z.object({
   id: z.string(),

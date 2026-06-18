@@ -20,11 +20,16 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import {
-  createProjectSchema,
-  type CreateProjectValues,
+  updateProjectSchema,
+  type UpdateProjectValues,
 } from "@/lib/validation/schemas";
-import { PLATFORM_SPECS, VOICE_LABELS, type Platform, type VoiceOption } from "@/types";
-import type { ProjectDTO } from "@/types";
+import {
+  PLATFORM_SPECS,
+  VOICE_LABELS,
+  type Platform,
+  type ProjectDTO,
+  type VoiceOption,
+} from "@/types";
 import { api } from "@/lib/api-client";
 
 const PLATFORMS: Platform[] = [
@@ -42,7 +47,7 @@ const VOICES: VoiceOption[] = [
   "no_audio",
 ];
 
-export function CreateProjectForm() {
+export function EditProjectForm({ project }: { project: ProjectDTO }) {
   const router = useRouter();
   const [submitting, setSubmitting] = useState(false);
 
@@ -51,30 +56,35 @@ export function CreateProjectForm() {
     handleSubmit,
     control,
     formState: { errors },
-  } = useForm<CreateProjectValues>({
-    resolver: zodResolver(createProjectSchema),
+  } = useForm<UpdateProjectValues>({
+    resolver: zodResolver(updateProjectSchema),
     defaultValues: {
-      name: "",
-      url: "",
-      loginEmail: "",
+      name: project.name,
+      url: project.url,
+      loginEmail: project.loginEmail,
       loginPassword: "",
-      prompt: "",
-      platforms: ["youtube"],
-      voiceOption: "openai_tts",
+      prompt: project.prompt,
+      platforms: project.platforms,
+      voiceOption: project.voiceOption,
     },
   });
 
-  async function onSubmit(values: CreateProjectValues) {
+  async function onSubmit(values: UpdateProjectValues) {
     setSubmitting(true);
     try {
-      const { project } = await api.post<{ project: ProjectDTO }>(
-        "/api/projects",
-        values,
+      const payload = { ...values };
+      if (!payload.loginPassword) {
+        delete payload.loginPassword;
+      }
+      await api.patch<{ project: ProjectDTO }>(
+        `/api/projects/${project.id}`,
+        payload,
       );
-      toast.success("Project created");
+      toast.success("Project updated");
       router.push(`/projects/${project.id}`);
+      router.refresh();
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Could not create project");
+      toast.error(err instanceof Error ? err.message : "Could not update project");
       setSubmitting(false);
     }
   }
@@ -85,7 +95,7 @@ export function CreateProjectForm() {
         <CardHeader>
           <CardTitle>Project details</CardTitle>
           <CardDescription>
-            Tell AutoDemo where to log in and what to demonstrate.
+            Update where AutoDemo logs in and what the video should demonstrate.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
@@ -112,26 +122,19 @@ export function CreateProjectForm() {
             <Field label="Login password" error={errors.loginPassword?.message}>
               <Input
                 type="password"
-                placeholder="••••••••"
+                placeholder="Leave blank to keep current"
                 autoComplete="new-password"
                 {...register("loginPassword")}
               />
             </Field>
           </div>
           <p className="text-xs text-muted-foreground">
-            Credentials are encrypted at rest and only decrypted by the worker to
-            sign in to the target app.
+            Changing the URL or credentials clears the discovery map — re-run
+            discovery after saving.
           </p>
 
-          <Field
-            label="Video description"
-            error={errors.prompt?.message}
-          >
-            <Textarea
-              rows={5}
-              placeholder="Demonstrate how a new user signs up, creates their first dashboard, and invites a teammate."
-              {...register("prompt")}
-            />
+          <Field label="Video description" error={errors.prompt?.message}>
+            <Textarea rows={5} {...register("prompt")} />
           </Field>
         </CardContent>
       </Card>
@@ -140,7 +143,7 @@ export function CreateProjectForm() {
         <CardHeader>
           <CardTitle>Target platforms</CardTitle>
           <CardDescription>
-            Generate a tailored export for each selected platform.
+            Platforms with the same aspect ratio share one rendered video.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -190,9 +193,6 @@ export function CreateProjectForm() {
       <Card>
         <CardHeader>
           <CardTitle>Voice</CardTitle>
-          <CardDescription>
-            How narration audio should be generated.
-          </CardDescription>
         </CardHeader>
         <CardContent>
           <Controller
@@ -212,11 +212,6 @@ export function CreateProjectForm() {
                     <RadioGroupItem value={voice} />
                     <span className="text-sm font-medium">
                       {VOICE_LABELS[voice]}
-                      {voice === "openai_tts" && (
-                        <span className="ml-2 text-xs text-muted-foreground">
-                          default
-                        </span>
-                      )}
                     </span>
                   </label>
                 ))}
@@ -237,7 +232,7 @@ export function CreateProjectForm() {
         </Button>
         <Button type="submit" disabled={submitting}>
           {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-          Create project
+          Save changes
         </Button>
       </div>
     </form>

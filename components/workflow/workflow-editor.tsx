@@ -34,11 +34,17 @@ function SortableRow({
   index,
   onToggle,
   onRename,
+  onUpdateField,
 }: {
   step: WorkflowStep;
   index: number;
   onToggle: (id: string, enabled: boolean) => void;
   onRename: (id: string, title: string) => void;
+  onUpdateField: (
+    id: string,
+    field: "url" | "selector" | "value",
+    value: string,
+  ) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: step.id });
@@ -78,6 +84,22 @@ function SortableRow({
             {step.description}
           </p>
         )}
+        <div className="grid gap-1.5 pt-1 sm:grid-cols-2">
+          <Input
+            value={step.url ?? ""}
+            onChange={(e) => onUpdateField(step.id, "url", e.target.value)}
+            placeholder="URL (optional)"
+            className="h-7 text-xs"
+          />
+          <Input
+            value={step.selector ?? ""}
+            onChange={(e) =>
+              onUpdateField(step.id, "selector", e.target.value)
+            }
+            placeholder="CSS selector (optional)"
+            className="h-7 text-xs"
+          />
+        </div>
       </div>
       <Badge variant="outline" className="hidden capitalize sm:inline-flex">
         {step.actionType}
@@ -140,6 +162,18 @@ export function WorkflowEditor({
 
   function rename(id: string, title: string) {
     setSteps((prev) => prev.map((s) => (s.id === id ? { ...s, title } : s)));
+  }
+
+  function updateField(
+    id: string,
+    field: "url" | "selector" | "value",
+    value: string,
+  ) {
+    setSteps((prev) =>
+      prev.map((s) =>
+        s.id === id ? { ...s, [field]: value || undefined } : s,
+      ),
+    );
   }
 
   async function save() {
@@ -263,6 +297,7 @@ export function WorkflowEditor({
                 index={index}
                 onToggle={toggle}
                 onRename={rename}
+                onUpdateField={updateField}
               />
             ))}
           </div>

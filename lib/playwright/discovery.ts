@@ -8,7 +8,8 @@ import {
   resolveLoginPage,
   waitForAppReady,
 } from "@/lib/playwright/spa";
-import type { ApplicationMap, DiscoveredPage } from "@/types";
+import { dismissOverlays } from "@/lib/playwright/overlays";
+import type { ApplicationMap, DiscoveredPage, InteractiveElement } from "@/types";
 import type { Reporter as PipelineReporter } from "@/lib/workflow/context";
 
 export interface DiscoverOptions {
@@ -27,6 +28,99 @@ const NAV_SELECTORS = [
   "aside a",
   ".sidebar a",
 ];
+
+async function hasPasswordField(page: Page): Promise<boolean> {
+  if ((await page.locator('input[type="password"]').count()) > 0) return true;
+  const frames = page.frames();
+  for (const frame of frames) {
+    if (frame === page.mainFrame()) continue;
+    if ((await frame.locator('input[type="password"]').count()) > 0) return true;
+  }
+  return false;
+}
+
+async function hasLoggedInSignals(page: Page): Promise<boolean> {
+  const userMenu = page.getByRole("button", {
+    name: /account|profile|logout|sign out|log out|my account/i,
+  });
+  if ((await userMenu.count()) > 0) return true;
+
+  const logoutLink = page.getByRole("link", {
+    name: /logout|sign out|log out/i,
+  });
+  return (await logoutLink.count()) > 0;
+}
+
+async function waitForLoginResult(page: Page): Promise<boolean> {
+  const deadline = Date.now() + 12000;
+  while (Date.now() < deadline) {
+    const currentUrl = page.url();
+    let pathname = currentUrl;
+    try {
+      pathname = new URL(currentUrl).pathname;
+    } catch {
+      /* keep url */
+    }
+
+    const onAuthRoute = AUTH_ROUTE_PATTERN.test(pathname);
+    const hasPassword = await hasPasswordField(page);
+    const loggedIn = await hasLoggedInSignals(page);
+
+    const hasError = await page
+      .locator(
+        '.error, [role="alert"], .alert-error, .text-red-500, .text-destructive',
+      )
+      .filter({ hasText: /invalid|incorrect|failed|wrong|error/i })
+      .first()
+      .isVisible()
+      .catch(() => false);
+
+    if (hasError) return false;
+    if (loggedIn) return true;
+    if (!onAuthRoute && !hasPassword) return true;
+
+    await page.waitForTimeout(500);
+  }
+  return false;
+}
+
+interface LoginFields {
+  emailField: ReturnType<Page["locator"]>;
+  passwordField: ReturnType<Page["locator"]>;
+  inIframe: boolean;
+}
+
+async function findLoginFields(page: Page): Promise<LoginFields | null> {
+  const mainPassword = page.locator('input[type="password"]').first();
+  if ((await mainPassword.count()) > 0) {
+    const emailField = page
+      .locator(
+        'input[type="email"], input[name="email"], input[name="username"], input[type="text"]',
+      )
+      .first();
+    return { emailField, passwordField: mainPassword, inIframe: false };
+  }
+
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue;
+    const framePassword = frame.locator('input[type="password"]').first();
+    if ((await framePassword.count()) > 0) {
+      const emailField = frame
+        .locator(
+          'input[type="email"], input[name="email"], input[name="username"], input[type="text"]',
+        )
+        .first();
+      return { emailField, passwordField: framePassword, inIframe: true };
+    }
+  }
+
+  return null;
+}
+
+async function submitLoginForm(page: Page, fields: LoginFields): Promise<void> {
+  await fields.passwordField.press("Enter");
+  await waitForAppReady(page);
+}
 
 /** Attempt to detect and complete a login form on the current page. */
 export async function login(
@@ -47,33 +141,49 @@ export async function login(
       return false;
     }
 
-    const passwordField = page.locator('input[type="password"]').first();
-    const emailField = page
-      .locator(
-        'input[type="email"], input[name="email"], input[name="username"], input[type="text"]',
-      )
-      .first();
-    if ((await emailField.count()) > 0 && email) {
-      await emailField.fill(email);
+    await dismissOverlays(page);
+
+    const fields = await findLoginFields(page);
+    if (!fields) {
+      await reporter.log("No login fields found — continuing unauthenticated.");
+      return false;
     }
-    await passwordField.fill(password);
+
+    if (fields.inIframe) {
+      await reporter.log("Login form detected inside iframe.");
+    }
+
+    if ((await fields.emailField.count()) > 0 && email) {
+      await fields.emailField.fill(email);
+    }
+    await fields.passwordField.fill(password);
     await reporter.log("Submitting login form…");
-    const submit = page
-      .locator(
-        'button[type="submit"], input[type="submit"], button:has-text("Sign in"), button:has-text("Log in"), button:has-text("Continue")',
-      )
-      .first();
-    if ((await submit.count()) > 0) {
-      await Promise.all([
-        waitForAppReady(page),
-        submit.click().catch(() => {}),
-      ]);
-    } else {
-      await passwordField.press("Enter");
+    await submitLoginForm(page, fields);
+
+    let success = await waitForLoginResult(page);
+    if (!success) {
+      await reporter.log("Login may have failed — retrying once…");
       await waitForAppReady(page);
+      const retryFields = await findLoginFields(page);
+      if (retryFields) {
+        if ((await retryFields.emailField.count()) > 0 && email) {
+          await retryFields.emailField.fill(email);
+        }
+        await retryFields.passwordField.fill(password);
+        await submitLoginForm(page, retryFields);
+        success = await waitForLoginResult(page);
+      }
     }
-    await reporter.log(`Login submitted (now at ${page.url()}).`);
-    return true;
+
+    if (success) {
+      await reporter.log(`Login succeeded (now at ${page.url()}).`);
+      return true;
+    }
+
+    await reporter.log(
+      `Login failed — still on auth page (${page.url()}). Recording may show unauthenticated views.`,
+    );
+    return false;
   } catch (err) {
     await reporter.log(
       `Login attempt failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -195,6 +305,72 @@ export async function captureScreenshots(
   return url;
 }
 
+/** Extract visible interactive controls from the current page. */
+export async function extractInteractives(
+  page: Page,
+): Promise<InteractiveElement[]> {
+  return page.evaluate(() => {
+    const seen = new Set<string>();
+    const out: { role: string; name: string; tag: string }[] = [];
+    const selectors = [
+      "button",
+      "a[href]",
+      "input:not([type=hidden])",
+      "textarea",
+      '[role="button"]',
+      '[role="link"]',
+      '[role="tab"]',
+    ];
+
+    function accessibleName(el: Element): string {
+      const aria = el.getAttribute("aria-label");
+      if (aria) return aria.trim();
+      const labelled = el.getAttribute("aria-labelledby");
+      if (labelled) {
+        const labelEl = document.getElementById(labelled);
+        if (labelEl?.textContent) return labelEl.textContent.trim();
+      }
+      const text = (el.textContent || "").trim().replace(/\s+/g, " ");
+      if (text) return text.slice(0, 60);
+      const placeholder = (el as HTMLInputElement).placeholder;
+      return placeholder?.trim().slice(0, 60) ?? "";
+    }
+
+    function isVisible(el: Element): boolean {
+      const html = el as HTMLElement;
+      if (!html.offsetParent && html.tagName !== "BODY") return false;
+      const style = window.getComputedStyle(html);
+      return style.visibility !== "hidden" && style.display !== "none";
+    }
+
+    for (const sel of selectors) {
+      document.querySelectorAll(sel).forEach((el) => {
+        if (!isVisible(el)) return;
+        const name = accessibleName(el);
+        if (name.length < 2) return;
+        const role =
+          el.getAttribute("role") ||
+          (el.tagName === "A"
+            ? "link"
+            : el.tagName === "INPUT" || el.tagName === "TEXTAREA"
+              ? "textbox"
+              : "button");
+        const tag =
+          el.getAttribute("role") === "tab"
+            ? "tab"
+            : el.tagName.toLowerCase();
+        const key = `${role}:${name}`;
+        if (seen.has(key)) return;
+        seen.add(key);
+        out.push({ role, name, tag });
+      });
+      if (out.length >= 30) break;
+    }
+
+    return out.slice(0, 30);
+  });
+}
+
 /** Extract trimmed visible text from the current page. */
 export async function extractVisibleText(page: Page): Promise<string[]> {
   return page.evaluate(() => {
@@ -297,10 +473,19 @@ export async function discoverApplication(
     const pages: DiscoveredPage[] = [];
     const screenshots: string[] = [];
     const uiText = new Set<string>();
+    const interactivesMap = new Map<string, InteractiveElement>();
+
+    async function capturePageState() {
+      const text = await extractVisibleText(page);
+      text.forEach((t) => uiText.add(t));
+      const items = await extractInteractives(page);
+      for (const item of items) {
+        interactivesMap.set(`${item.role}:${item.name}`, item);
+      }
+    }
 
     const homeShot = await captureScreenshots(page, projectId, 0);
-    const homeText = await extractVisibleText(page);
-    homeText.forEach((t) => uiText.add(t));
+    await capturePageState();
     pages.push({
       url: page.url(),
       title: await page.title(),
@@ -315,8 +500,7 @@ export async function discoverApplication(
         if (!link.href.startsWith(origin)) continue;
         await navigateAndWait(page, link.href);
         const shot = await captureScreenshots(page, projectId, captured);
-        const text = await extractVisibleText(page);
-        text.forEach((t) => uiText.add(t));
+        await capturePageState();
         pages.push({
           url: page.url(),
           title: (await page.title()) || link.label,
@@ -333,9 +517,16 @@ export async function discoverApplication(
     await browser.close();
     browser = null;
 
+    const interactives = Array.from(interactivesMap.values()).slice(0, 30);
+    await reporter.log(
+      `Cataloged ${interactives.length} interactive controls across ${pages.length} pages.`,
+    );
+
     return {
       pages,
       navigation: navLinks.map((l) => l.label),
+      navLinks: navLinks.map((l) => ({ label: l.label, href: l.href })),
+      interactives,
       screenshots,
       uiText: Array.from(uiText),
     };

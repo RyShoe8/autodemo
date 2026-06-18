@@ -1,5 +1,6 @@
 import type { Page } from "playwright";
 import type { Reporter } from "@/lib/workflow/context";
+import { dismissOverlays } from "@/lib/playwright/overlays";
 
 const LOGIN_PATHS = [
   "/login",
@@ -35,6 +36,7 @@ export async function waitForAppReady(page: Page): Promise<void> {
 export async function navigateAndWait(page: Page, url: string): Promise<void> {
   await page.goto(url, { waitUntil: "load", timeout: 30000 });
   await waitForAppReady(page);
+  await dismissOverlays(page);
 }
 
 async function hasLoginForm(page: Page): Promise<boolean> {

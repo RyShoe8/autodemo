@@ -1,5 +1,6 @@
 import { jsonCompletion } from "@/lib/openai/client";
 import { scriptSchema } from "@/lib/validation/schemas";
+import { env } from "@/lib/env";
 import type { Script, WorkflowStep } from "@/types";
 import type { Reporter } from "@/lib/workflow/context";
 
@@ -26,12 +27,12 @@ function buildUserPrompt(input: ScriptGenInput): string {
     .join("\n");
   return [
     `PRODUCT: ${input.projectName}`,
-    `VIDEO GOAL:\n${input.prompt}`,
+    `VIDEO GOAL:\n${input.prompt.slice(0, 500)}`,
     `STEPS:\n${steps}`,
   ].join("\n\n");
 }
 
-function buildTemplateScript(input: ScriptGenInput): Script {
+export function buildTemplateScript(input: ScriptGenInput): Script {
   return {
     title: `${input.projectName} — Product Demo`,
     intro: `Here's a quick look at ${input.projectName} and how it helps you get more done.`,
@@ -67,9 +68,13 @@ export async function generateScript(input: ScriptGenInput): Promise<Script> {
     };
   }
 
+  const model = env.openaiModelScript;
+  await reporter.log(`OpenAI: generating script (${model})…`);
+
   const result = await jsonCompletion({
     system: SYSTEM_PROMPT,
     user: buildUserPrompt(input),
+    model,
   });
 
   if (result === null) {
