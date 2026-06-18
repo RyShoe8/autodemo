@@ -5,6 +5,7 @@ import { storage } from "@/lib/storage";
 import { createLogger } from "@/lib/logger";
 import { sleep } from "@/lib/utils";
 import { loadBrowserFnForVerify } from "@/lib/playwright/browser-eval/run";
+import { launchChromium } from "@/lib/playwright/browser";
 import { recoverOrphanedJobsOnStartup, interruptJob } from "@/lib/workflow/recover-orphaned-jobs";
 import type { JobRecord } from "@/lib/db/types";
 
@@ -44,8 +45,7 @@ export async function runWorker(): Promise<void> {
   log.info(`Polling every ${env.workerPollInterval}ms.`);
 
   try {
-    const { chromium } = await import("playwright");
-    const browser = await chromium.launch({ headless: true });
+    const browser = await launchChromium();
     await browser.close();
     log.info("Playwright Chromium launch check passed.");
   } catch (err) {

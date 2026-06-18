@@ -7,6 +7,7 @@ import { storage } from "@/lib/storage";
 import { convertWebmToMp4 } from "@/lib/ffmpeg/convert";
 import { placeholderScreenshotSVG } from "@/lib/media/placeholder";
 import { login } from "@/lib/playwright/discovery";
+import { launchChromium, recordViewport } from "@/lib/playwright/browser";
 import { waitForModalInput } from "@/lib/playwright/modal-input";
 import { navigateAndWait, waitForAppReady } from "@/lib/playwright/spa";
 import {
@@ -79,7 +80,10 @@ export async function captureStep(
           await reporter.log(
             `Step "${step.title}": click via ${result.strategy}.`,
           );
-          await page.waitForLoadState("networkidle").catch(() => {});
+          await page
+            .waitForLoadState("domcontentloaded", { timeout: 8000 })
+            .catch(() => {});
+          await page.waitForTimeout(400);
           await waitForSpaUpdate(page, urlBefore);
         }
         break;
@@ -127,7 +131,7 @@ export async function captureStep(
       default:
         break;
     }
-    await page.waitForTimeout(1200);
+    await page.waitForTimeout(600);
   } catch (err) {
     await reporter.log(
       `Step "${step.title}" action issue: ${err instanceof Error ? err.message : String(err)} (captured current state).`,
@@ -251,12 +255,12 @@ export async function executeWorkflow(
   let browser: Browser | null = null;
   let recordContext: BrowserContext | null = null;
   try {
-    const { chromium } = await import("playwright");
     await reporter.log("Launching browser for recording…");
-    browser = await chromium.launch({ headless: true });
+    browser = await launchChromium();
+    const viewport = recordViewport();
 
     const loginContext = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
+      viewport,
       ignoreHTTPSErrors: true,
     });
     const loginPage = await loginContext.newPage();
@@ -276,12 +280,12 @@ export async function executeWorkflow(
 
     const videoDir = await fs.mkdtemp(path.join(os.tmpdir(), "autodemo-rec-"));
     recordContext = await browser.newContext({
-      viewport: { width: 1280, height: 800 },
+      viewport,
       ignoreHTTPSErrors: true,
       storageState,
       recordVideo: {
         dir: videoDir,
-        size: { width: 1280, height: 800 },
+        size: viewport,
       },
     });
     const page = await recordContext.newPage();

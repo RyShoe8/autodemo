@@ -10,6 +10,7 @@ import {
 import { dismissOverlays } from "@/lib/playwright/overlays";
 import { fetchAndStoreSiteLogo } from "@/lib/playwright/favicon";
 import { browserEval } from "@/lib/playwright/browser-eval/run";
+import { launchChromium } from "@/lib/playwright/browser";
 import type { ApplicationMap, DiscoveredPage, InteractiveElement } from "@/types";
 import type { Reporter as PipelineReporter } from "@/lib/workflow/context";
 
@@ -301,9 +302,8 @@ export async function discoverApplication(
 
   let browser: Browser | null = null;
   try {
-    const { chromium } = await import("playwright");
     await reporter.log("Launching headless browser…");
-    browser = await chromium.launch({ headless: true });
+    browser = await launchChromium();
     const context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       ignoreHTTPSErrors: true,

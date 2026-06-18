@@ -15,7 +15,6 @@ const SIGN_IN_PATTERN = /sign in|log in|login/i;
 /** Wait for a client-rendered app to hydrate after navigation. */
 export async function waitForAppReady(page: Page): Promise<void> {
   await Promise.race([
-    page.waitForLoadState("networkidle", { timeout: 10000 }).catch(() => {}),
     page
       .waitForFunction(
         () => !document.body?.innerText?.includes("Loading..."),
@@ -29,7 +28,7 @@ export async function waitForAppReady(page: Page): Promise<void> {
       )
       .catch(() => {}),
   ]);
-  await page.waitForTimeout(400);
+  await page.waitForTimeout(250);
 }
 
 /** Navigate and wait for SPA hydration. */

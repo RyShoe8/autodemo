@@ -49,6 +49,12 @@ export const env = {
   remotionOffthreadCacheBytes:
     Number(read("REMOTION_OFFTHREAD_CACHE_MB") ?? "256") * 1024 * 1024,
 
+  recordViewportWidth: Number(read("RECORD_VIEWPORT_WIDTH") ?? "1024"),
+  recordViewportHeight: Number(read("RECORD_VIEWPORT_HEIGHT") ?? "640"),
+  playwrightChromiumArgs: read("PLAYWRIGHT_CHROMIUM_ARGS")
+    ?.split(/\s+/)
+    .filter(Boolean),
+
   nodeEnv: read("NODE_ENV") ?? "development",
 };
 
