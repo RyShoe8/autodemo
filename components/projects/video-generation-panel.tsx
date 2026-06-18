@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Loader2, ListChecks, Film, RefreshCw } from "lucide-react";
+import { Loader2, ListChecks, Film, RefreshCw, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Card,
@@ -18,17 +18,12 @@ import { JobLogs } from "@/components/status/job-logs";
 import { MissingCredentials } from "@/components/status/missing-credentials";
 import { useVideoJob } from "@/hooks/use-job";
 import { api } from "@/lib/api-client";
-import type { VideoStatus } from "@/types";
+import { ACTIVE_JOB_STATUSES } from "@/lib/workflow/job-status";
+import type { JobStatus, VideoStatus } from "@/types";
 
-const ACTIVE_STATUSES = [
-  "queued",
-  "building_workflow",
-  "recording",
-  "generating_script",
-  "generating_audio",
-  "rendering",
-  "exporting",
-];
+const ACTIVE_STATUSES: JobStatus[] = ACTIVE_JOB_STATUSES.filter(
+  (s) => s !== "discovering",
+);
 
 export function VideoGenerationPanel({
   projectId,
@@ -48,10 +43,12 @@ export function VideoGenerationPanel({
     job?.type === "build_workflow" || job?.type === "produce" ? job : null;
   const jobStatus = pipelineJob?.status;
   const isActive = jobStatus ? ACTIVE_STATUSES.includes(jobStatus) : false;
+  const jobFailed = pipelineJob?.status === "failed";
   const canProduce =
     !isActive &&
     !busy &&
-    (status === "awaiting_approval" ||
+    (jobFailed ||
+      status === "awaiting_approval" ||
       status === "completed" ||
       status === "failed");
 
@@ -76,6 +73,20 @@ export function VideoGenerationPanel({
     } catch (err) {
       setBusy(false);
       toast.error(err instanceof Error ? err.message : "Could not start recording");
+    }
+  }
+
+  async function cancelJob() {
+    if (!pipelineJob) return;
+    setBusy(true);
+    try {
+      await api.post(`/api/jobs/${pipelineJob.id}/cancel`);
+      toast.success("Job cancelled");
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not cancel job");
+    } finally {
+      setBusy(false);
     }
   }
 
@@ -120,7 +131,22 @@ export function VideoGenerationPanel({
               ) : (
                 <RefreshCw className="h-4 w-4" />
               )}
-              Re-produce
+              {jobFailed ? "Retry produce" : "Re-produce"}
+            </Button>
+          )}
+          {isActive && pipelineJob && (
+            <Button
+              variant="outline"
+              className="border-destructive/50 text-destructive hover:bg-destructive/10"
+              onClick={() => void cancelJob()}
+              disabled={busy}
+            >
+              {busy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <XCircle className="h-4 w-4" />
+              )}
+              Cancel
             </Button>
           )}
         </div>
@@ -128,6 +154,13 @@ export function VideoGenerationPanel({
         {pipelineJob && (
           <>
             <JobProgress job={pipelineJob} />
+
+            {isActive && (
+              <p className="text-sm text-muted-foreground">
+                Rendering can take several minutes. Progress updates appear in
+                the activity log.
+              </p>
+            )}
 
             {pipelineJob.status === "failed" && pipelineJob.error && (
               <p className="rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm text-destructive">

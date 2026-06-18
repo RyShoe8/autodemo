@@ -56,6 +56,9 @@ export function toJobDTO(record: JobRecord): JobDTO {
     completedAt: record.completedAt
       ? new Date(record.completedAt).toISOString()
       : undefined,
+    updatedAt: record.updatedAt
+      ? new Date(record.updatedAt).toISOString()
+      : undefined,
   };
 }
 

@@ -3,27 +3,12 @@ import { db } from "@/lib/db";
 import { generateSchema } from "@/lib/validation/schemas";
 import { toJobDTO } from "@/lib/serialize";
 import { createLogger } from "@/lib/logger";
-import type { JobStatus } from "@/types";
+import { isActiveJobStatus } from "@/lib/workflow/job-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const log = createLogger("api:generate");
-
-const ACTIVE_JOB_STATUSES: JobStatus[] = [
-  "queued",
-  "discovering",
-  "building_workflow",
-  "recording",
-  "generating_script",
-  "generating_audio",
-  "rendering",
-  "exporting",
-];
-
-function isActive(status: JobStatus): boolean {
-  return ACTIVE_JOB_STATUSES.includes(status);
-}
 
 export async function POST(req: NextRequest) {
   let body: unknown;
@@ -68,7 +53,7 @@ export async function POST(req: NextRequest) {
         );
       }
       const latestVideoJob = await db.getLatestJobByVideo(videoId);
-      if (latestVideoJob && isActive(latestVideoJob.status)) {
+      if (latestVideoJob && isActiveJobStatus(latestVideoJob.status)) {
         return NextResponse.json(
           { error: "A job is already in progress for this video" },
           { status: 409 },
@@ -78,7 +63,7 @@ export async function POST(req: NextRequest) {
 
     if (type === "discover" || type === "render_bumper") {
       const latestProjectJob = await db.getLatestJobByProject(projectId);
-      if (latestProjectJob && isActive(latestProjectJob.status)) {
+      if (latestProjectJob && isActiveJobStatus(latestProjectJob.status)) {
         return NextResponse.json(
           { error: "A job is already in progress for this project" },
           { status: 409 },

@@ -251,6 +251,7 @@ export class FileBackend implements DbBackend {
         logs: [],
         missingCredentials: [],
         createdAt: new Date(),
+        updatedAt: new Date(),
       };
       jobs.push(record);
       await writeCollection("jobs", jobs);
@@ -301,7 +302,7 @@ export class FileBackend implements DbBackend {
       const jobs = await readCollection<JobRecord>("jobs");
       const idx = jobs.findIndex((j) => j.id === id);
       if (idx === -1) return null;
-      jobs[idx] = { ...jobs[idx], ...patch };
+      jobs[idx] = { ...jobs[idx], ...patch, updatedAt: new Date() };
       await writeCollection("jobs", jobs);
       return jobs[idx];
     });
@@ -313,6 +314,7 @@ export class FileBackend implements DbBackend {
       const idx = jobs.findIndex((j) => j.id === id);
       if (idx === -1) return;
       jobs[idx].logs = [...(jobs[idx].logs ?? []), line];
+      jobs[idx].updatedAt = new Date();
       await writeCollection("jobs", jobs);
     });
   }

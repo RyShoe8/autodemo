@@ -29,10 +29,31 @@ import {
   exportVariantKey,
   exportVariantMaxSeconds,
   type Platform,
+  type JobStatus,
+  type ProjectStatus,
+  type VideoStatus,
 } from "@/types";
 import type { JobRecord, ProjectRecord, ProjectVideoRecord } from "@/lib/db/types";
+import { CANCELLED_BY_USER } from "@/lib/workflow/job-status";
 
 const log = createLogger("orchestrator");
+
+async function finishJobIfNotFailed(
+  ctx: PipelineContext,
+  jobStatus: JobStatus,
+  entityStatus?: ProjectStatus | VideoStatus,
+  progress?: number,
+): Promise<boolean> {
+  const current = await db.getJob(ctx.jobId);
+  if (current?.status === "failed") return false;
+
+  await ctx.setStatus(jobStatus, entityStatus, progress ?? 100);
+  await db.updateJob(ctx.jobId, {
+    completedAt: new Date(),
+    missingCredentials: ctx.missingCredentials,
+  });
+  return true;
+}
 
 export async function runJob(job: JobRecord): Promise<void> {
   const project = await db.getProject(job.projectId);
@@ -74,6 +95,18 @@ export async function runJob(job: JobRecord): Promise<void> {
     }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
+    if (
+      message === CANCELLED_BY_USER ||
+      message.includes("renderMedia() got cancelled")
+    ) {
+      log.info(`Job ${job.id} cancelled`);
+      return;
+    }
+    const current = await db.getJob(job.id);
+    if (current?.status === "failed" && current.error === CANCELLED_BY_USER) {
+      log.info(`Job ${job.id} already cancelled`);
+      return;
+    }
     log.error(`Job ${job.id} failed`, message);
     await ctx.log(`ERROR: ${message}`);
     await db.updateJob(job.id, {
@@ -90,6 +123,7 @@ export async function runJob(job: JobRecord): Promise<void> {
 }
 
 async function runDiscover(ctx: PipelineContext, project: ProjectRecord) {
+  await ctx.throwIfCancelled();
   await ctx.setStatus("discovering", "discovering", 5);
   const password = decrypt(project.encryptedPassword);
 
@@ -112,11 +146,7 @@ async function runDiscover(ctx: PipelineContext, project: ProjectRecord) {
   });
 
   await ctx.log("Discovery complete — application map ready.");
-  await ctx.setStatus("completed", "ready", 100);
-  await db.updateJob(ctx.jobId, {
-    completedAt: new Date(),
-    missingCredentials: ctx.missingCredentials,
-  });
+  await finishJobIfNotFailed(ctx, "completed", "ready");
 }
 
 async function runBuildWorkflow(
@@ -128,6 +158,7 @@ async function runBuildWorkflow(
     throw new Error("Run discovery on the project before building a workflow.");
   }
 
+  await ctx.throwIfCancelled();
   await ctx.setStatus("building_workflow", "building_workflow", 10);
   const workflow = await generateWorkflow({
     prompt: video.prompt,
@@ -141,14 +172,11 @@ async function runBuildWorkflow(
   });
 
   await ctx.log(`Workflow ready with ${workflow.length} steps — awaiting approval.`);
-  await ctx.setStatus("awaiting_approval", "awaiting_approval", 100);
-  await db.updateJob(ctx.jobId, {
-    completedAt: new Date(),
-    missingCredentials: ctx.missingCredentials,
-  });
+  await finishJobIfNotFailed(ctx, "awaiting_approval", "awaiting_approval");
 }
 
 async function runRenderBumper(ctx: PipelineContext, project: ProjectRecord) {
+  await ctx.throwIfCancelled();
   await ctx.setStatus("rendering", undefined, 10);
 
   const fresh = await db.getProject(project.id);
@@ -184,11 +212,7 @@ async function runRenderBumper(ctx: PipelineContext, project: ProjectRecord) {
 
   await db.updateProject(fresh.id, { bumperUrl: url });
   await ctx.log(`Bumper saved (${fresh.bumperDurationSeconds ?? 4}s).`);
-  await ctx.setStatus("completed", undefined, 100);
-  await db.updateJob(ctx.jobId, {
-    completedAt: new Date(),
-    missingCredentials: ctx.missingCredentials,
-  });
+  await finishJobIfNotFailed(ctx, "completed");
 
   await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
 }
@@ -207,6 +231,7 @@ async function runProduce(
     throw new Error("No enabled workflow steps to record.");
   }
 
+  await ctx.throwIfCancelled();
   await ctx.setStatus("recording", "recording", 10);
   const password = decrypt(project.encryptedPassword);
   const recording = await executeWorkflow({
@@ -220,6 +245,7 @@ async function runProduce(
   });
   await ctx.log(`Captured ${recording.scenes.length} scenes.`);
   await ctx.setProgress(30);
+  await ctx.throwIfCancelled();
 
   await ctx.setStatus("generating_script", "recording", 35);
   const scriptInput = {
@@ -234,6 +260,7 @@ async function runProduce(
         buildTemplateScript(scriptInput))
       : await generateScript(scriptInput);
 
+  await ctx.throwIfCancelled();
   await ctx.setStatus("generating_audio", "recording", 50);
   const voice = await generateVoice(video.voiceOption, {
     script,
@@ -241,6 +268,7 @@ async function runProduce(
     reporter: ctx,
   });
 
+  await ctx.throwIfCancelled();
   await ctx.setStatus("rendering", "rendering", 65);
   const masterDir = await fs.mkdtemp(path.join(os.tmpdir(), "autodemo-master-"));
   let rawVideoPath: string | undefined;
@@ -309,7 +337,7 @@ async function runProduce(
 
   const masterPath = path.join(masterDir, "master.mp4");
   await ctx.log("Rendering 16:9 body master (no inline bumper)…");
-  await renderToFile(baseProps, masterPath, ctx);
+  await renderToFile(baseProps, masterPath, ctx, () => ctx.throwIfCancelled());
   const masterBuffer = await fs.readFile(masterPath);
   await storage.save(
     `projects/${project.id}/videos/${video.id}/exports/master.mp4`,
@@ -332,6 +360,7 @@ async function runProduce(
   });
 
   await ctx.setStatus("exporting", "rendering", 80);
+  await ctx.throwIfCancelled();
   await db.deleteAssetsByVideo(video.id);
 
   const baseScreenshot = recording.scenes[0]?.screenshot;
@@ -365,6 +394,7 @@ async function runProduce(
       .join(", ");
 
     await ctx.log(`Exporting ${variantKey} variant for ${platformLabels}…`);
+    await ctx.throwIfCancelled();
 
     const videoUrl = await exportPlatform({
       projectId: project.id,
@@ -410,9 +440,5 @@ async function runProduce(
   await fs.rm(masterDir, { recursive: true, force: true }).catch(() => {});
 
   await ctx.log("All platform exports complete.");
-  await ctx.setStatus("completed", "completed", 100);
-  await db.updateJob(ctx.jobId, {
-    completedAt: new Date(),
-    missingCredentials: ctx.missingCredentials,
-  });
+  await finishJobIfNotFailed(ctx, "completed", "completed");
 }

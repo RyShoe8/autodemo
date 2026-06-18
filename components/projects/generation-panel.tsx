@@ -3,7 +3,7 @@
 import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { Sparkles, Loader2, ListChecks, Film, RefreshCw } from "lucide-react";
+import { Sparkles, Loader2, ListChecks, Film, RefreshCw, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import {
   Card,
@@ -18,17 +18,9 @@ import { JobLogs } from "@/components/status/job-logs";
 import { MissingCredentials } from "@/components/status/missing-credentials";
 import { useProjectJob } from "@/hooks/use-job";
 import { api } from "@/lib/api-client";
+import { ACTIVE_JOB_STATUSES } from "@/lib/workflow/job-status";
 
-const ACTIVE_STATUSES = [
-  "queued",
-  "discovering",
-  "building_workflow",
-  "recording",
-  "generating_script",
-  "generating_audio",
-  "rendering",
-  "exporting",
-];
+const ACTIVE_STATUSES = ACTIVE_JOB_STATUSES;
 
 export function GenerationPanel({ projectId }: { projectId: string }) {
   const router = useRouter();
@@ -52,6 +44,20 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
       router.refresh();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not start");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function cancelJob() {
+    if (!job) return;
+    setBusy(true);
+    try {
+      await api.post(`/api/jobs/${job.id}/cancel`);
+      toast.success("Job cancelled");
+      router.refresh();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Could not cancel job");
     } finally {
       setBusy(false);
     }
@@ -125,6 +131,22 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
                     <RefreshCw className="h-4 w-4" />
                   )}
                   Re-run discovery
+                </Button>
+              )}
+
+              {isActive && job && (
+                <Button
+                  variant="outline"
+                  className="border-destructive/50 text-destructive hover:bg-destructive/10"
+                  onClick={() => void cancelJob()}
+                  disabled={busy}
+                >
+                  {busy ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <XCircle className="h-4 w-4" />
+                  )}
+                  Cancel
                 </Button>
               )}
             </div>

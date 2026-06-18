@@ -79,6 +79,7 @@ function mapJob(doc: any): JobRecord {
     startedAt: doc.startedAt,
     completedAt: doc.completedAt,
     createdAt: doc.createdAt ?? new Date(),
+    updatedAt: doc.updatedAt ?? doc.createdAt ?? new Date(),
   };
 }
 

@@ -144,8 +144,10 @@ export async function renderToFile(
   props: DemoVideoProps,
   outputPath: string,
   reporter: Reporter,
+  onCancelCheck?: () => Promise<void>,
 ): Promise<void> {
-  const { selectComposition, renderMedia } = await import("@remotion/renderer");
+  const { selectComposition, renderMedia, makeCancelSignal } =
+    await import("@remotion/renderer");
   const serveUrl = await ensureBundle(reporter);
 
   const composition = await selectComposition({
@@ -157,29 +159,43 @@ export async function renderToFile(
   const verbose = process.env.REMOTION_VERBOSE === "true";
   let lastLoggedPercent = -1;
 
-  await renderMedia({
-    composition: {
-      ...composition,
-      durationInFrames: computeDurationInFrames(props),
-      width: props.width,
-      height: props.height,
-      fps: props.fps,
-      props,
-    },
-    serveUrl,
-    codec: "h264",
-    outputLocation: outputPath,
-    inputProps: props,
-    verbose,
-    logLevel: verbose ? "verbose" : "info",
-    onProgress: ({ progress }) => {
-      const percent = Math.round(progress * 100);
-      if (percent >= lastLoggedPercent + 5 || percent === 100) {
-        lastLoggedPercent = percent;
-        void reporter.log(`Render progress: ${percent}%`);
-      }
-    },
-  });
+  const { cancelSignal, cancel } = makeCancelSignal();
+  const cancelPoll = onCancelCheck
+    ? setInterval(() => {
+        void onCancelCheck().catch(() => {
+          cancel();
+        });
+      }, 2000)
+    : undefined;
+
+  try {
+    await renderMedia({
+      composition: {
+        ...composition,
+        durationInFrames: computeDurationInFrames(props),
+        width: props.width,
+        height: props.height,
+        fps: props.fps,
+        props,
+      },
+      serveUrl,
+      codec: "h264",
+      outputLocation: outputPath,
+      inputProps: props,
+      verbose,
+      logLevel: verbose ? "verbose" : "info",
+      cancelSignal,
+      onProgress: ({ progress }) => {
+        const percent = Math.round(progress * 100);
+        if (percent >= lastLoggedPercent + 5 || percent === 100) {
+          lastLoggedPercent = percent;
+          void reporter.log(`Render progress: ${percent}%`);
+        }
+      },
+    });
+  } finally {
+    if (cancelPoll) clearInterval(cancelPoll);
+  }
 }
 
 export interface RenderBumperInput {

@@ -58,6 +58,7 @@ export interface JobRecord {
   startedAt?: Date;
   completedAt?: Date;
   createdAt: Date;
+  updatedAt?: Date;
 }
 
 export interface AssetRecord {

@@ -1,5 +1,6 @@
 import { db } from "@/lib/db";
 import { createLogger } from "@/lib/logger";
+import { CANCELLED_BY_USER } from "@/lib/workflow/job-status";
 import type { JobStatus, ProjectStatus, VideoStatus } from "@/types";
 
 const log = createLogger("pipeline");
@@ -38,6 +39,13 @@ export class PipelineContext implements Reporter {
 
   get missingCredentials(): string[] {
     return Array.from(this.missingSet);
+  }
+
+  async throwIfCancelled(): Promise<void> {
+    const job = await db.getJob(this.jobId);
+    if (job?.status === "failed" && job.error === CANCELLED_BY_USER) {
+      throw new Error(CANCELLED_BY_USER);
+    }
   }
 
   async setProgress(progress: number): Promise<void> {

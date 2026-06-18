@@ -196,6 +196,7 @@ export interface JobDTO {
   error?: string;
   startedAt?: string;
   completedAt?: string;
+  updatedAt?: string;
 }
 
 export const PLATFORM_SPECS: Record<Platform, PlatformSpec> = {
