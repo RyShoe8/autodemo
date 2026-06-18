@@ -26,6 +26,16 @@ export const env = {
     read("OPENAI_MODEL_WORKFLOW") ?? read("OPENAI_MODEL") ?? "gpt-4o-mini",
   openaiModelScript:
     read("OPENAI_MODEL_SCRIPT") ?? read("OPENAI_MODEL") ?? "gpt-4o-mini",
+  openaiModelRecord:
+    read("OPENAI_MODEL_RECORD") ?? read("OPENAI_MODEL") ?? "gpt-4o-mini",
+  recordAiMode: (read("RECORD_AI_MODE") ?? "modal_steps") as
+    | "failure_only"
+    | "modal_steps"
+    | "all_interactive",
+  recordUseVision: read("RECORD_USE_VISION") !== "false",
+  uiSettleMs: Number(read("UI_SETTLE_MS") ?? "1500"),
+  stepEndBufferMs: Number(read("STEP_END_BUFFER_MS") ?? "800"),
+  clipTrimBias: read("CLIP_TRIM_BIAS") ?? "tail",
 
   adminPassword: read("ADMIN_PASSWORD") ?? DEV_DEFAULT_PASSWORD,
   authSecret: read("AUTH_SECRET") ?? DEV_DEFAULT_AUTH_SECRET,

@@ -6,16 +6,27 @@ import { isBlobStorageError } from "@/lib/storage/blob-utils";
 import { storage } from "@/lib/storage";
 import { convertWebmToMp4 } from "@/lib/ffmpeg/convert";
 import { placeholderScreenshotSVG } from "@/lib/media/placeholder";
+import {
+  isModalProneStep,
+  recordAiMode,
+  recordUseVision,
+  resolveAndExecuteViaAi,
+  shouldUseAiFallback,
+} from "@/lib/playwright/ai-resolver";
 import { login } from "@/lib/playwright/discovery";
 import { launchChromium, recordViewport } from "@/lib/playwright/browser";
 import { waitForModalInput } from "@/lib/playwright/modal-input";
-import { navigateAndWait, waitForAppReady } from "@/lib/playwright/spa";
+import { navigateAndWait } from "@/lib/playwright/spa";
 import {
   clickResolved,
   highlightResolved,
   resolveStep,
   typeResolved,
 } from "@/lib/playwright/step-resolver";
+import {
+  STEP_END_BUFFER_MS,
+  waitForUiSettle,
+} from "@/lib/playwright/ui-settle";
 import type { Reporter } from "@/lib/workflow/context";
 import type {
   ApplicationMap,
@@ -40,10 +51,56 @@ function estimateDuration(step: WorkflowStep): number {
   return base + extra;
 }
 
-async function waitForSpaUpdate(page: Page, urlBefore: string): Promise<void> {
-  await waitForAppReady(page);
-  if (page.url() === urlBefore) {
-    await page.waitForTimeout(800);
+function expectModalForStep(
+  step: WorkflowStep,
+  previousStep?: WorkflowStep,
+  aiExpectModal?: boolean,
+): boolean {
+  if (aiExpectModal) return true;
+  if (step.actionType === "type" && previousStep?.actionType === "click") {
+    return true;
+  }
+  return isModalProneStep(step, previousStep);
+}
+
+async function settleAndMaybeRetry(
+  page: Page,
+  step: WorkflowStep,
+  urlBefore: string,
+  expectModal: boolean,
+  reporter: Reporter,
+): Promise<void> {
+  let settle = await waitForUiSettle(page, { urlBefore, expectModal });
+  await reporter.log(
+    settle.settled
+      ? `Step "${step.title}": UI settled (${settle.reason}).`
+      : `Step "${step.title}": UI not settled (${settle.reason}).`,
+  );
+
+  if (
+    !settle.settled &&
+    expectModal &&
+    recordUseVision() &&
+    (step.actionType === "click" || step.actionType === "type")
+  ) {
+    await reporter.log(
+      `Step "${step.title}": retrying via OpenAI vision after failed settle…`,
+    );
+    const retry = await resolveAndExecuteViaAi(page, step, true);
+    if (retry.success) {
+      await reporter.log(
+        `Step "${step.title}": vision retry via ${retry.strategy}.`,
+      );
+      settle = await waitForUiSettle(page, {
+        urlBefore,
+        expectModal: retry.expectModal ?? expectModal,
+      });
+      await reporter.log(
+        settle.settled
+          ? `Step "${step.title}": UI settled after retry (${settle.reason}).`
+          : `Step "${step.title}": UI still not settled after retry (${settle.reason}).`,
+      );
+    }
   }
 }
 
@@ -58,6 +115,9 @@ export async function captureStep(
 ): Promise<void> {
   const resolved = resolveStep(step, applicationMap);
   const urlBefore = page.url();
+  const aiMode = recordAiMode();
+  const useVision = recordUseVision();
+  let expectModal = expectModalForStep(step, previousStep);
 
   await reporter.log(`Executing ${step.actionType} for "${step.title}"…`);
 
@@ -68,10 +128,24 @@ export async function captureStep(
           ? new URL(resolved.url, origin).toString()
           : origin;
         await navigateAndWait(page, target);
+        await settleAndMaybeRetry(page, step, urlBefore, false, reporter);
         break;
       }
       case "click": {
-        const result = await clickResolved(page, resolved, step, applicationMap);
+        let result = await clickResolved(page, resolved, step, applicationMap);
+        if (
+          !result.success &&
+          shouldUseAiFallback(step, previousStep, aiMode)
+        ) {
+          await reporter.log(
+            `Step "${step.title}": deterministic click failed — trying OpenAI resolver…`,
+          );
+          const aiResult = await resolveAndExecuteViaAi(page, step, useVision);
+          if (aiResult.success) {
+            result = aiResult;
+            if (aiResult.expectModal) expectModal = true;
+          }
+        }
         if (!result.success) {
           await reporter.log(
             `Step "${step.title}": no click target found — skipping interaction.`,
@@ -84,15 +158,28 @@ export async function captureStep(
             .waitForLoadState("domcontentloaded", { timeout: 8000 })
             .catch(() => {});
           await page.waitForTimeout(400);
-          await waitForSpaUpdate(page, urlBefore);
         }
+        await settleAndMaybeRetry(page, step, urlBefore, expectModal, reporter);
         break;
       }
       case "type": {
         if (previousStep?.actionType === "click") {
           await waitForModalInput(page);
         }
-        const result = await typeResolved(page, resolved, step);
+        let result = await typeResolved(page, resolved, step);
+        if (
+          !result.success &&
+          shouldUseAiFallback(step, previousStep, aiMode)
+        ) {
+          await reporter.log(
+            `Step "${step.title}": deterministic type failed — trying OpenAI resolver…`,
+          );
+          const aiResult = await resolveAndExecuteViaAi(page, step, useVision);
+          if (aiResult.success) {
+            result = aiResult;
+            if (aiResult.expectModal) expectModal = true;
+          }
+        }
         if (!result.success) {
           await reporter.log(
             `Step "${step.title}": no input field found — skipping type.`,
@@ -101,8 +188,8 @@ export async function captureStep(
           await reporter.log(
             `Step "${step.title}": type via ${result.strategy}.`,
           );
-          await waitForSpaUpdate(page, urlBefore);
         }
+        await settleAndMaybeRetry(page, step, urlBefore, expectModal, reporter);
         break;
       }
       case "scroll": {
@@ -309,6 +396,7 @@ export async function executeWorkflow(
         applicationMap,
         previousStep,
       );
+      await page.waitForTimeout(STEP_END_BUFFER_MS);
       const videoEndMs = Date.now() - recordingStart;
       const scene = await recordScene(
         page,

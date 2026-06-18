@@ -98,6 +98,18 @@ export const aiWorkflowSchema = z.object({
   steps: z.array(aiWorkflowStepSchema).min(1),
 });
 
+export const aiRecordStepSchema = z.object({
+  strategy: z.enum(["role", "label", "placeholder", "text", "css"]),
+  role: z
+    .enum(["button", "link", "textbox", "tab", "checkbox", "menuitem"])
+    .nullable()
+    .optional(),
+  name: z.string().min(1),
+  selector: z.string().nullable().optional(),
+  value: z.string().nullable().optional(),
+  expectModal: z.boolean().optional(),
+});
+
 export const scriptSceneSchema = z.object({
   stepId: z.string().optional().nullable(),
   heading: z.string().min(1),

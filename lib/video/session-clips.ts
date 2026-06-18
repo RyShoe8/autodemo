@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { hasFfmpeg } from "@/lib/ffmpeg/export";
+import { env } from "@/lib/env";
 import type { Reporter } from "@/lib/workflow/context";
 
 export interface SceneClipInput {
@@ -69,14 +70,27 @@ async function sliceSceneClip(
       ? Math.min(clipSec, maxDurationSec)
       : clipSec;
 
-  if (maxDurationSec !== undefined && clipSec > maxDurationSec && reporter) {
+  let sliceStartSec = startSec;
+  if (
+    env.clipTrimBias === "tail" &&
+    maxDurationSec !== undefined &&
+    clipSec > durationSec
+  ) {
+    const trimOffset = clipSec - durationSec;
+    sliceStartSec = startSec + trimOffset;
+    if (reporter) {
+      await reporter.log(
+        `Scene ${index + 1}: tail-biased trim — offset ${trimOffset.toFixed(1)}s into ${clipSec.toFixed(1)}s step window.`,
+      );
+    }
+  } else if (maxDurationSec !== undefined && clipSec > maxDurationSec && reporter) {
     await reporter.log(
       `Trimmed scene ${index + 1} clip from ${clipSec.toFixed(1)}s to ${durationSec.toFixed(1)}s.`,
     );
   }
 
   const outputPath = path.join(outDir, `session-${jobId}-scene-${index}.mp4`);
-  sliceOneClip(sessionPath, outputPath, startSec, durationSec);
+  sliceOneClip(sessionPath, outputPath, sliceStartSec, durationSec);
   return [index, outputPath];
 }
 

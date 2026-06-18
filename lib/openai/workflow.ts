@@ -19,6 +19,8 @@ Rules:
 - 5 to 9 steps.
 - Start with a navigate step to the most relevant page using a url from NAV LINKS when available.
 - At least 3 steps must be "click" or "type" — show real product usage, not static screenshots.
+- Prefer flows that open dialogs or forms: use a "click" step to open a modal, then a "type" step for data entry.
+- Many buttons only appear after navigation; use click steps with clear titles (e.g. "Create project") even if not listed in INTERACTIVE CONTROLS.
 - Avoid bare "screenshot" steps; every step should change UI state.
 - For "type" steps, provide a realistic value string to enter.
 - Prefer navigation labels and URLs from the provided map.
