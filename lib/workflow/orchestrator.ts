@@ -360,12 +360,6 @@ async function runProduce(
   const masterPath = path.join(masterDir, "master.mp4");
   await ctx.log("Rendering 16:9 body master (no inline bumper)…");
   await renderToFile(baseProps, masterPath, ctx, () => ctx.throwIfCancelled());
-  const masterBuffer = await fs.readFile(masterPath);
-  await storage.save(
-    `projects/${project.id}/videos/${video.id}/exports/master.mp4`,
-    masterBuffer,
-    "video/mp4",
-  );
   await ctx.setProgress(75);
 
   const bumperOffset =
@@ -405,44 +399,71 @@ async function runProduce(
     bumperDurationSeconds: project.bumperDurationSeconds ?? 4,
   };
 
-  const exportResults = await Promise.all(
-    groupEntries.map(async ([variantKey, groupPlatforms]) => {
-      const representative = groupPlatforms[0];
-      const spec = PLATFORM_SPECS[representative];
-      const isPortrait = spec.height > spec.width;
-      const maxSeconds = exportVariantMaxSeconds(groupPlatforms);
-      const platformLabels = groupPlatforms
-        .map((p) => PLATFORM_SPECS[p].label)
-        .join(", ");
+  const exportParallel = process.env.EXPORT_PARALLEL === "true";
 
-      await ctx.log(`Exporting ${variantKey} variant for ${platformLabels}…`);
-      await ctx.throwIfCancelled();
+  async function exportVariant(
+    variantKey: string,
+    groupPlatforms: Platform[],
+  ): Promise<{
+    variantKey: string;
+    groupPlatforms: Platform[];
+    videoUrl: string;
+    thumbnailUrl: string;
+  }> {
+    const representative = groupPlatforms[0];
+    const spec = PLATFORM_SPECS[representative];
+    const isPortrait = spec.height > spec.width;
+    const maxSeconds = exportVariantMaxSeconds(groupPlatforms);
+    const platformLabels = groupPlatforms
+      .map((p) => PLATFORM_SPECS[p].label)
+      .join(", ");
 
-      const videoUrl = await exportPlatform({
-        projectId: project.id,
-        videoId: video.id,
-        masterPath,
-        baseProps,
-        platform: representative,
-        branding: exportBranding,
-        variantKey,
-        maxSeconds,
-        reporter: ctx,
-      });
+    await ctx.log(`Exporting ${variantKey} variant for ${platformLabels}…`);
+    await ctx.throwIfCancelled();
 
-      const thumbnailUrl = await generateThumbnail({
-        projectId: `${project.id}/videos/${video.id}/${variantKey}`,
-        title: video.name,
-        headline: script.title,
-        baseScreenshotUrl: baseScreenshot,
-        width: isPortrait ? 720 : 1280,
-        height: isPortrait ? 1280 : 720,
-        reporter: ctx,
-      });
+    const videoUrl = await exportPlatform({
+      projectId: project.id,
+      videoId: video.id,
+      masterPath,
+      baseProps,
+      platform: representative,
+      branding: exportBranding,
+      variantKey,
+      maxSeconds,
+      reporter: ctx,
+    });
 
-      return { variantKey, groupPlatforms, videoUrl, thumbnailUrl };
-    }),
-  );
+    const thumbnailUrl = await generateThumbnail({
+      projectId: `${project.id}/videos/${video.id}/${variantKey}`,
+      title: video.name,
+      headline: script.title,
+      baseScreenshotUrl: baseScreenshot,
+      width: isPortrait ? 720 : 1280,
+      height: isPortrait ? 1280 : 720,
+      reporter: ctx,
+    });
+
+    return { variantKey, groupPlatforms, videoUrl, thumbnailUrl };
+  }
+
+  let exportResults: Awaited<ReturnType<typeof exportVariant>>[];
+  if (exportParallel) {
+    exportResults = await Promise.all(
+      groupEntries.map(([variantKey, groupPlatforms]) =>
+        exportVariant(variantKey, groupPlatforms),
+      ),
+    );
+  } else {
+    exportResults = [];
+    let completedGroups = 0;
+    for (const [variantKey, groupPlatforms] of groupEntries) {
+      exportResults.push(await exportVariant(variantKey, groupPlatforms));
+      completedGroups += 1;
+      await ctx.setProgress(
+        80 + Math.round((completedGroups / groupEntries.length) * 16),
+      );
+    }
+  }
 
   for (const result of exportResults) {
     for (const platform of result.groupPlatforms) {
@@ -458,6 +479,13 @@ async function runProduce(
       });
     }
   }
+
+  const masterBuffer = await fs.readFile(masterPath);
+  await storage.save(
+    `projects/${project.id}/videos/${video.id}/exports/master.mp4`,
+    masterBuffer,
+    "video/mp4",
+  );
 
   await ctx.setProgress(98);
 

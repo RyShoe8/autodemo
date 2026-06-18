@@ -26,6 +26,7 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
   const router = useRouter();
   const { job, isTerminal } = useProjectJob(projectId);
   const [busy, setBusy] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const status = job?.status;
   const isActive = status ? ACTIVE_STATUSES.includes(status) : false;
@@ -51,7 +52,7 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
 
   async function cancelJob() {
     if (!job) return;
-    setBusy(true);
+    setCancelling(true);
     try {
       await api.post(`/api/jobs/${job.id}/cancel`);
       toast.success("Job cancelled");
@@ -59,7 +60,7 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not cancel job");
     } finally {
-      setBusy(false);
+      setCancelling(false);
     }
   }
 
@@ -139,9 +140,9 @@ export function GenerationPanel({ projectId }: { projectId: string }) {
                   variant="outline"
                   className="border-destructive/50 text-destructive hover:bg-destructive/10"
                   onClick={() => void cancelJob()}
-                  disabled={busy}
+                  disabled={cancelling}
                 >
-                  {busy ? (
+                  {cancelling ? (
                     <Loader2 className="h-4 w-4 animate-spin" />
                   ) : (
                     <XCircle className="h-4 w-4" />

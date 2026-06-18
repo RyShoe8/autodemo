@@ -38,6 +38,7 @@ export function VideoGenerationPanel({
   const { job, isTerminal } = useVideoJob(videoId);
   const notifiedJobRef = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [cancelling, setCancelling] = useState(false);
 
   const pipelineJob =
     job?.type === "build_workflow" || job?.type === "produce" ? job : null;
@@ -71,14 +72,15 @@ export function VideoGenerationPanel({
       toast.success("Recording started");
       router.refresh();
     } catch (err) {
-      setBusy(false);
       toast.error(err instanceof Error ? err.message : "Could not start recording");
+    } finally {
+      setBusy(false);
     }
   }
 
   async function cancelJob() {
     if (!pipelineJob) return;
-    setBusy(true);
+    setCancelling(true);
     try {
       await api.post(`/api/jobs/${pipelineJob.id}/cancel`);
       toast.success("Job cancelled");
@@ -86,7 +88,7 @@ export function VideoGenerationPanel({
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Could not cancel job");
     } finally {
-      setBusy(false);
+      setCancelling(false);
     }
   }
 
@@ -139,9 +141,9 @@ export function VideoGenerationPanel({
               variant="outline"
               className="border-destructive/50 text-destructive hover:bg-destructive/10"
               onClick={() => void cancelJob()}
-              disabled={busy}
+              disabled={cancelling}
             >
-              {busy ? (
+              {cancelling ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <XCircle className="h-4 w-4" />
