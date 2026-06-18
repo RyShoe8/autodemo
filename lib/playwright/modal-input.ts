@@ -16,6 +16,25 @@ export const MODAL_INPUT_SELECTORS = [
   '[role="alertdialog"] input:not([type="hidden"])',
   '[role="alertdialog"] textarea',
   '[role="textbox"]',
+];
+
+/** Inputs inside open panels / main content (inline create forms, not modals). */
+export const INLINE_INPUT_SELECTORS = [
+  '[role="complementary"] input:not([type="hidden"]):visible',
+  '[role="complementary"] textarea:visible',
+  '[role="complementary"] [contenteditable="true"]:visible',
+  '[role="main"] input:not([type="hidden"]):visible',
+  '[role="main"] textarea:visible',
+  '[role="main"] [contenteditable="true"]:visible',
+  "aside input:not([type=\"hidden\"]):visible",
+  "aside textarea:visible",
+  '[data-panel] input:not([type="hidden"]):visible',
+  '[data-panel] textarea:visible',
+];
+
+export const ALL_INPUT_SELECTORS = [
+  ...MODAL_INPUT_SELECTORS,
+  ...INLINE_INPUT_SELECTORS,
   'input:not([type="hidden"]):visible',
   "textarea:visible",
   '[contenteditable="true"]:visible',
@@ -42,9 +61,9 @@ export async function waitForModalVisible(page: Page): Promise<boolean> {
   return false;
 }
 
-/** Wait for a modal or inline input to appear (common after click steps). */
-export async function waitForModalInput(page: Page): Promise<void> {
-  for (const sel of MODAL_INPUT_SELECTORS) {
+/** Wait for an input in a modal or inline panel form. */
+export async function waitForInputReady(page: Page): Promise<void> {
+  for (const sel of ALL_INPUT_SELECTORS) {
     try {
       await page.locator(sel).first().waitFor({ state: "visible", timeout: 5000 });
       return;
@@ -52,4 +71,9 @@ export async function waitForModalInput(page: Page): Promise<void> {
       /* try next */
     }
   }
+}
+
+/** @deprecated use waitForInputReady */
+export async function waitForModalInput(page: Page): Promise<void> {
+  await waitForInputReady(page);
 }

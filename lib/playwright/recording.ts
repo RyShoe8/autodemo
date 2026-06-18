@@ -6,8 +6,9 @@ import { isBlobStorageError } from "@/lib/storage/blob-utils";
 import { storage } from "@/lib/storage";
 import { convertWebmToMp4 } from "@/lib/ffmpeg/convert";
 import { placeholderScreenshotSVG } from "@/lib/media/placeholder";
+import { env } from "@/lib/env";
 import {
-  isModalProneStep,
+  isPanelProneStep,
   recordAiMode,
   recordUseVision,
   resolveAndExecuteViaAi,
@@ -15,7 +16,7 @@ import {
 } from "@/lib/playwright/ai-resolver";
 import { login } from "@/lib/playwright/discovery";
 import { launchChromium, recordViewport } from "@/lib/playwright/browser";
-import { waitForModalInput } from "@/lib/playwright/modal-input";
+import { waitForInputReady } from "@/lib/playwright/modal-input";
 import { navigateAndWait } from "@/lib/playwright/spa";
 import {
   clickResolved,
@@ -25,7 +26,9 @@ import {
 } from "@/lib/playwright/step-resolver";
 import {
   STEP_END_BUFFER_MS,
+  waitForTextAppears,
   waitForUiSettle,
+  type UiChangeExpectation,
 } from "@/lib/playwright/ui-settle";
 import type { Reporter } from "@/lib/workflow/context";
 import type {
@@ -51,26 +54,32 @@ function estimateDuration(step: WorkflowStep): number {
   return base + extra;
 }
 
-function expectModalForStep(
+function inferUiExpectation(
   step: WorkflowStep,
   previousStep?: WorkflowStep,
-  aiExpectModal?: boolean,
-): boolean {
-  if (aiExpectModal) return true;
+  aiExpectation?: UiChangeExpectation,
+): UiChangeExpectation {
+  if (aiExpectation && aiExpectation !== "none") return aiExpectation;
+  if (step.actionType === "navigate") return "route";
   if (step.actionType === "type" && previousStep?.actionType === "click") {
-    return true;
+    return "panel";
   }
-  return isModalProneStep(step, previousStep);
+  if (isPanelProneStep(step, previousStep)) return "panel";
+  return "none";
 }
 
 async function settleAndMaybeRetry(
   page: Page,
   step: WorkflowStep,
   urlBefore: string,
-  expectModal: boolean,
+  expectation: UiChangeExpectation,
   reporter: Reporter,
 ): Promise<void> {
-  let settle = await waitForUiSettle(page, { urlBefore, expectModal });
+  await reporter.log(
+    `Step "${step.title}": waiting for UI change (expectation: ${expectation}).`,
+  );
+
+  let settle = await waitForUiSettle(page, { urlBefore, expectation });
   await reporter.log(
     settle.settled
       ? `Step "${step.title}": UI settled (${settle.reason}).`
@@ -79,7 +88,6 @@ async function settleAndMaybeRetry(
 
   if (
     !settle.settled &&
-    expectModal &&
     recordUseVision() &&
     (step.actionType === "click" || step.actionType === "type")
   ) {
@@ -91,9 +99,11 @@ async function settleAndMaybeRetry(
       await reporter.log(
         `Step "${step.title}": vision retry via ${retry.strategy}.`,
       );
+      const retryExpectation =
+        retry.expectUiChange ?? expectation;
       settle = await waitForUiSettle(page, {
         urlBefore,
-        expectModal: retry.expectModal ?? expectModal,
+        expectation: retryExpectation,
       });
       await reporter.log(
         settle.settled
@@ -102,6 +112,23 @@ async function settleAndMaybeRetry(
       );
     }
   }
+}
+
+async function verifyTypedTextAppears(
+  page: Page,
+  step: WorkflowStep,
+  resolvedValue: string | undefined,
+  reporter: Reporter,
+): Promise<void> {
+  const needle = resolvedValue ?? step.value;
+  if (!needle || step.actionType !== "type") return;
+
+  const textResult = await waitForTextAppears(page, needle);
+  await reporter.log(
+    textResult.settled
+      ? `Step "${step.title}": ${textResult.reason}.`
+      : `Step "${step.title}": verify text — ${textResult.reason}.`,
+  );
 }
 
 /** Execute a single workflow step against the live page. */
@@ -117,7 +144,7 @@ export async function captureStep(
   const urlBefore = page.url();
   const aiMode = recordAiMode();
   const useVision = recordUseVision();
-  let expectModal = expectModalForStep(step, previousStep);
+  let expectation = inferUiExpectation(step, previousStep);
 
   await reporter.log(`Executing ${step.actionType} for "${step.title}"…`);
 
@@ -128,7 +155,13 @@ export async function captureStep(
           ? new URL(resolved.url, origin).toString()
           : origin;
         await navigateAndWait(page, target);
-        await settleAndMaybeRetry(page, step, urlBefore, false, reporter);
+        await settleAndMaybeRetry(
+          page,
+          step,
+          urlBefore,
+          "route",
+          reporter,
+        );
         break;
       }
       case "click": {
@@ -143,7 +176,11 @@ export async function captureStep(
           const aiResult = await resolveAndExecuteViaAi(page, step, useVision);
           if (aiResult.success) {
             result = aiResult;
-            if (aiResult.expectModal) expectModal = true;
+            expectation = inferUiExpectation(
+              step,
+              previousStep,
+              aiResult.expectUiChange,
+            );
           }
         }
         if (!result.success) {
@@ -159,12 +196,18 @@ export async function captureStep(
             .catch(() => {});
           await page.waitForTimeout(400);
         }
-        await settleAndMaybeRetry(page, step, urlBefore, expectModal, reporter);
+        await settleAndMaybeRetry(
+          page,
+          step,
+          urlBefore,
+          expectation,
+          reporter,
+        );
         break;
       }
       case "type": {
         if (previousStep?.actionType === "click") {
-          await waitForModalInput(page);
+          await waitForInputReady(page);
         }
         let result = await typeResolved(page, resolved, step);
         if (
@@ -177,7 +220,11 @@ export async function captureStep(
           const aiResult = await resolveAndExecuteViaAi(page, step, useVision);
           if (aiResult.success) {
             result = aiResult;
-            if (aiResult.expectModal) expectModal = true;
+            expectation = inferUiExpectation(
+              step,
+              previousStep,
+              aiResult.expectUiChange,
+            );
           }
         }
         if (!result.success) {
@@ -188,8 +235,20 @@ export async function captureStep(
           await reporter.log(
             `Step "${step.title}": type via ${result.strategy}.`,
           );
+          await verifyTypedTextAppears(
+            page,
+            step,
+            resolved.value,
+            reporter,
+          );
         }
-        await settleAndMaybeRetry(page, step, urlBefore, expectModal, reporter);
+        await settleAndMaybeRetry(
+          page,
+          step,
+          urlBefore,
+          expectation === "none" ? "panel" : expectation,
+          reporter,
+        );
         break;
       }
       case "scroll": {
@@ -211,7 +270,7 @@ export async function captureStep(
         break;
       }
       case "wait": {
-        await page.waitForTimeout(800);
+        await page.waitForTimeout(env.stepWaitMs);
         break;
       }
       case "screenshot":

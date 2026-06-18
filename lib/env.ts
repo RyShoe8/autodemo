@@ -33,8 +33,9 @@ export const env = {
     | "modal_steps"
     | "all_interactive",
   recordUseVision: read("RECORD_USE_VISION") !== "false",
-  uiSettleMs: Number(read("UI_SETTLE_MS") ?? "1500"),
+  uiSettleMs: Number(read("UI_SETTLE_MS") ?? "3000"),
   stepEndBufferMs: Number(read("STEP_END_BUFFER_MS") ?? "800"),
+  stepWaitMs: Number(read("STEP_WAIT_MS") ?? "2000"),
   clipTrimBias: read("CLIP_TRIM_BIAS") ?? "tail",
 
   adminPassword: read("ADMIN_PASSWORD") ?? DEV_DEFAULT_PASSWORD,

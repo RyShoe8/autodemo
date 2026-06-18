@@ -1,6 +1,7 @@
 import { jsonCompletion, jsonCompletionWithImage } from "@/lib/openai/client";
 import { env } from "@/lib/env";
 import { aiRecordStepSchema } from "@/lib/validation/schemas";
+import type { UiChangeExpectation } from "@/lib/playwright/ui-settle";
 import type { WorkflowStep } from "@/types";
 import { z } from "zod";
 
@@ -8,12 +9,15 @@ export type AiRecordTarget = z.infer<typeof aiRecordStepSchema>;
 
 const SYSTEM_PROMPT = `You help a screen-recording bot locate UI elements on a web page.
 Given an approved workflow step and the current page context, return the single best target to interact with.
-Return STRICT JSON: { "strategy": "role"|"label"|"placeholder"|"text"|"css", "role": "button"|"link"|"textbox"|"tab"|"checkbox"|"menuitem"|null, "name": string, "selector": string|null, "value": string|null, "expectModal": boolean }
+Return STRICT JSON: { "strategy": "role"|"label"|"placeholder"|"text"|"css", "role": "button"|"link"|"textbox"|"tab"|"checkbox"|"menuitem"|null, "name": string, "selector": string|null, "value": string|null, "expectUiChange": "none"|"modal"|"route"|"panel"|"text" }
 Rules:
 - Pick ONE target that matches the step intent — do not invent new steps.
 - Prefer accessible role+name over CSS selectors.
 - For "type" steps, target the input field and include a realistic "value" if not obvious from the step.
-- Set expectModal true when the step opens a dialog or the target is inside a modal.
+- Set expectUiChange to "panel" when the step adds/edits list items in a side panel or insights frame without opening a dialog.
+- Set expectUiChange to "modal" only when a dialog or overlay opens.
+- Set expectUiChange to "route" for navigation steps.
+- Set expectUiChange to "text" when the step should cause specific typed text to appear on the page after submit.
 - Use strategy "role" with role+name when possible; "label"/"placeholder"/"text" for form fields; "css" only when necessary.`;
 
 function buildUserPrompt(
@@ -36,16 +40,28 @@ function buildUserPrompt(
     .join("\n");
 }
 
-function parseTarget(raw: unknown): AiRecordTarget | null {
+function normalizeExpectUiChange(
+  target: AiRecordTarget,
+): UiChangeExpectation {
+  if (target.expectUiChange) return target.expectUiChange;
+  if (target.expectModal) return "modal";
+  return "none";
+}
+
+function parseTarget(raw: unknown): (AiRecordTarget & { expectUiChange: UiChangeExpectation }) | null {
   const parsed = aiRecordStepSchema.safeParse(raw);
-  return parsed.success ? parsed.data : null;
+  if (!parsed.success) return null;
+  return {
+    ...parsed.data,
+    expectUiChange: normalizeExpectUiChange(parsed.data),
+  };
 }
 
 /** Resolve a click/type target from the accessibility tree. */
 export async function resolveRecordStepA11y(
   step: WorkflowStep,
   a11ySnapshot: string,
-): Promise<AiRecordTarget | null> {
+): Promise<(AiRecordTarget & { expectUiChange: UiChangeExpectation }) | null> {
   const result = await jsonCompletion({
     system: SYSTEM_PROMPT,
     user: buildUserPrompt(step, a11ySnapshot, false),
@@ -59,7 +75,7 @@ export async function resolveRecordStepVision(
   step: WorkflowStep,
   a11ySnapshot: string,
   imageBase64: string,
-): Promise<AiRecordTarget | null> {
+): Promise<(AiRecordTarget & { expectUiChange: UiChangeExpectation }) | null> {
   const result = await jsonCompletionWithImage({
     system: SYSTEM_PROMPT,
     user: buildUserPrompt(step, a11ySnapshot, true),

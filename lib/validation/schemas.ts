@@ -98,6 +98,8 @@ export const aiWorkflowSchema = z.object({
   steps: z.array(aiWorkflowStepSchema).min(1),
 });
 
+export type UiChangeExpectation = "none" | "modal" | "route" | "panel" | "text";
+
 export const aiRecordStepSchema = z.object({
   strategy: z.enum(["role", "label", "placeholder", "text", "css"]),
   role: z
@@ -107,6 +109,9 @@ export const aiRecordStepSchema = z.object({
   name: z.string().min(1),
   selector: z.string().nullable().optional(),
   value: z.string().nullable().optional(),
+  expectUiChange: z
+    .enum(["none", "modal", "route", "panel", "text"])
+    .optional(),
   expectModal: z.boolean().optional(),
 });
 

@@ -19,7 +19,9 @@ Rules:
 - 5 to 9 steps.
 - Start with a navigate step to the most relevant page using a url from NAV LINKS when available.
 - At least 3 steps must be "click" or "type" — show real product usage, not static screenshots.
-- Prefer flows that open dialogs or forms: use a "click" step to open a modal, then a "type" step for data entry.
+- Many apps use inline forms in side panels or insights frames — click to focus/create, then type, then click Save/Add (not always a modal dialog).
+- After create/submit steps, include a short "wait" or "highlight" step so the updated panel is visible in the recording.
+- For "type" steps, use distinctive values (e.g. "Demo Task Alpha") so the bot can verify the item appeared in the UI.
 - Many buttons only appear after navigation; use click steps with clear titles (e.g. "Create project") even if not listed in INTERACTIVE CONTROLS.
 - Avoid bare "screenshot" steps; every step should change UI state.
 - For "type" steps, provide a realistic value string to enter.

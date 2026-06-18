@@ -6,24 +6,30 @@ import {
   type AiRecordTarget,
 } from "@/lib/openai/record-step";
 import { captureA11ySnapshot, captureStepScreenshot } from "@/lib/playwright/page-context";
+import type { UiChangeExpectation } from "@/lib/playwright/ui-settle";
 import type { ActionResult } from "@/lib/playwright/step-resolver";
 import type { WorkflowStep } from "@/types";
 
 export type RecordAiMode = "failure_only" | "modal_steps" | "all_interactive";
 
-const MODAL_PRONE_RE = /\b(create|add|new|edit|submit|open|save|delete|invite|upload)\b/i;
+const PANEL_PRONE_RE =
+  /\b(create|add|new|edit|submit|open|save|delete|invite|upload|task|content|item)\b/i;
 
-export function isModalProneStep(
+/** Steps likely to update an inline panel or insights frame (not necessarily a modal). */
+export function isPanelProneStep(
   step: WorkflowStep,
   previousStep?: WorkflowStep,
 ): boolean {
   if (step.actionType === "type" && previousStep?.actionType === "click") {
     return true;
   }
-  if (step.actionType !== "click") return false;
+  if (step.actionType !== "click" && step.actionType !== "type") return false;
   const haystack = `${step.title} ${step.description}`;
-  return MODAL_PRONE_RE.test(haystack);
+  return PANEL_PRONE_RE.test(haystack);
 }
+
+/** @deprecated use isPanelProneStep */
+export const isModalProneStep = isPanelProneStep;
 
 export function shouldUseAiFallback(
   step: WorkflowStep,
@@ -39,7 +45,7 @@ export function shouldUseAiFallback(
     case "all_interactive":
       return true;
     case "modal_steps":
-      return isModalProneStep(step, previousStep);
+      return isPanelProneStep(step, previousStep);
     default:
       return false;
   }
@@ -115,26 +121,40 @@ async function tryTypeLocator(
 }
 
 export interface AiResolveResult extends ActionResult {
+  expectUiChange?: UiChangeExpectation;
+  /** @deprecated use expectUiChange */
   expectModal?: boolean;
 }
 
 async function executeAiTarget(
   page: Page,
   step: WorkflowStep,
-  target: AiRecordTarget,
+  target: AiRecordTarget & { expectUiChange?: UiChangeExpectation },
   strategyLabel: string,
 ): Promise<AiResolveResult> {
   const locator = buildLocatorFromAiTarget(page, target);
   if (!locator) return { success: false };
 
+  const expectUiChange =
+    target.expectUiChange ??
+    (target.expectModal ? "modal" : undefined);
+
   if (step.actionType === "type") {
     const text = target.value ?? step.value ?? "Demo input";
     const result = await tryTypeLocator(page, locator, text, strategyLabel);
-    return { ...result, expectModal: target.expectModal };
+    return {
+      ...result,
+      expectUiChange,
+      expectModal: expectUiChange === "modal",
+    };
   }
 
   const result = await tryClickLocator(page, locator, strategyLabel);
-  return { ...result, expectModal: target.expectModal };
+  return {
+    ...result,
+    expectUiChange,
+    expectModal: expectUiChange === "modal",
+  };
 }
 
 /** Resolve and execute a step via OpenAI (a11y first, optional vision). */
