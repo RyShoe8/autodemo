@@ -12,6 +12,7 @@ import { generateScript, buildTemplateScript } from "@/lib/openai/script";
 import { generateVoice } from "@/lib/video/voice";
 import { generateCaptions } from "@/lib/video/captions";
 import { generateThumbnail } from "@/lib/video/thumbnail";
+import { resolveVideoToLocalFile } from "@/lib/video/media-resolve";
 import { buildBaseProps, renderBumperToFile, renderToFile } from "@/lib/video/render";
 import { exportPlatform } from "@/lib/ffmpeg/export";
 import { enrichWorkflowSteps } from "@/lib/playwright/step-resolver";
@@ -234,11 +235,24 @@ async function runProduce(
   });
 
   await ctx.setStatus("rendering", "rendering", 65);
+  const masterDir = await fs.mkdtemp(path.join(os.tmpdir(), "autodemo-master-"));
+  let rawVideoPath: string | undefined;
+  if (recording.rawVideo) {
+    rawVideoPath = await resolveVideoToLocalFile(
+      recording.rawVideo,
+      path.join(masterDir, "session.mp4"),
+    );
+    const stat = await fs.stat(rawVideoPath);
+    await ctx.log(
+      `Resolved screen recording to local file (${Math.round(stat.size / 1024)} KB).`,
+    );
+  }
+
   const baseProps = await buildBaseProps({
     script,
     scenes: recording.scenes,
     voice,
-    rawVideo: recording.rawVideo,
+    rawVideoPath,
     branding: {
       logoUrl: project.logoUrl,
       brandColor: project.brandColor ?? "#38bdf8",
@@ -248,7 +262,6 @@ async function runProduce(
     reporter: ctx,
   });
 
-  const masterDir = await fs.mkdtemp(path.join(os.tmpdir(), "autodemo-master-"));
   const masterPath = path.join(masterDir, "master.mp4");
   await ctx.log("Rendering 16:9 body master (no inline bumper)…");
   await renderToFile(baseProps, masterPath, ctx);

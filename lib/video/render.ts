@@ -28,7 +28,8 @@ export interface RenderBuildInput {
   script: Script;
   scenes: CapturedScene[];
   voice: VoiceResult;
-  rawVideo?: string;
+  /** Absolute local path to session.mp4 (not a blob URL or data URI). */
+  rawVideoPath?: string;
   branding: RenderBranding;
   reporter: Reporter;
 }
@@ -52,7 +53,7 @@ export async function ensureBundle(reporter: Reporter): Promise<string> {
 export async function buildBaseProps(
   input: RenderBuildInput,
 ): Promise<DemoVideoProps> {
-  const { script, scenes, voice, rawVideo, branding } = input;
+  const { script, scenes, voice, rawVideoPath, branding } = input;
   const segments = voice.segments;
   const introFrames = Math.round((segments[0]?.durationSeconds ?? 5) * RENDER_FPS);
   const outroFrames = Math.round(
@@ -62,7 +63,7 @@ export async function buildBaseProps(
     ? Math.round(branding.bumperDurationSeconds * RENDER_FPS)
     : 0;
 
-  const videoDataUri = rawVideo ? await toDataUri(rawVideo) : undefined;
+  const videoSrc = rawVideoPath;
   const logoSrc = branding.logoUrl
     ? await toDataUri(branding.logoUrl)
     : undefined;
@@ -93,7 +94,7 @@ export async function buildBaseProps(
         RENDER_FPS,
         Math.round(clipDuration * RENDER_FPS),
       ),
-      videoSrc: videoDataUri,
+      videoSrc,
       videoStartMs: scene.videoStartMs,
       videoEndMs: scene.videoEndMs,
       transition: transitionForIndex(i),
@@ -168,6 +169,8 @@ export async function renderToFile(
     codec: "h264",
     outputLocation: outputPath,
     inputProps: props,
+    verbose: true,
+    logLevel: "verbose",
     onProgress: () => {},
   });
 }
@@ -223,6 +226,8 @@ export async function renderBumperToFile(
     codec: "h264",
     outputLocation: outputPath,
     inputProps: props,
+    verbose: true,
+    logLevel: "verbose",
     onProgress: () => {},
   });
 }

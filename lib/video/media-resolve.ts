@@ -1,3 +1,4 @@
+import fs from "node:fs/promises";
 import { readAsset } from "@/lib/storage";
 
 const MIME: Record<string, string> = {
@@ -27,7 +28,21 @@ export async function toDataUri(url: string): Promise<string> {
   try {
     const buffer = await readAsset(url);
     return `data:${mimeFromUrl(url)};base64,${buffer.toString("base64")}`;
-  } catch {
-    return url;
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    throw new Error(`Failed to resolve asset for render: ${detail} (${url})`);
   }
+}
+
+/**
+ * Download a video asset to a local file for Remotion OffthreadVideo.
+ * Server-side rendering accepts absolute paths without the HTTP proxy.
+ */
+export async function resolveVideoToLocalFile(
+  url: string,
+  destPath: string,
+): Promise<string> {
+  const buffer = await readAsset(url);
+  await fs.writeFile(destPath, buffer);
+  return destPath;
 }
