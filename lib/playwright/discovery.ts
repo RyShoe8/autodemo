@@ -9,12 +9,7 @@ import {
 } from "@/lib/playwright/spa";
 import { dismissOverlays } from "@/lib/playwright/overlays";
 import { fetchAndStoreSiteLogo } from "@/lib/playwright/favicon";
-import {
-  crawlNavigationFallback,
-  crawlNavigationPrimary,
-  extractInteractivesInBrowser,
-  extractVisibleTextInBrowser,
-} from "@/lib/playwright/browser-eval/discovery.browser.js";
+import { browserEval } from "@/lib/playwright/browser-eval/run";
 import type { ApplicationMap, DiscoveredPage, InteractiveElement } from "@/types";
 import type { Reporter as PipelineReporter } from "@/lib/workflow/context";
 
@@ -213,7 +208,11 @@ export async function crawlNavigation(
 ): Promise<NavLink[]> {
   await waitForAppReady(page);
 
-  const primary = await page.evaluate(crawlNavigationPrimary, NAV_SELECTORS);
+  const primary = await browserEval<NavLink[]>(
+    page,
+    "crawl-primary.fn.js",
+    NAV_SELECTORS,
+  );
 
   if (primary.length >= 3) {
     await reporter?.log(
@@ -222,7 +221,9 @@ export async function crawlNavigation(
     return primary.slice(0, 12);
   }
 
-  const fallback = await page.evaluate(crawlNavigationFallback, origin);
+  const fallback = await browserEval<
+    (NavLink & { score: number; isAuth: boolean })[]
+  >(page, "crawl-fallback.fn.js", origin);
 
   const seen = new Set(primary.map((l) => l.href));
   const merged: NavLink[] = [...primary];
@@ -260,12 +261,15 @@ export async function captureScreenshots(
 export async function extractInteractives(
   page: Page,
 ): Promise<InteractiveElement[]> {
-  return page.evaluate(extractInteractivesInBrowser);
+  return browserEval<InteractiveElement[]>(
+    page,
+    "extract-interactives.fn.js",
+  );
 }
 
 /** Extract trimmed visible text from the current page. */
 export async function extractVisibleText(page: Page): Promise<string[]> {
-  return page.evaluate(extractVisibleTextInBrowser);
+  return browserEval<string[]>(page, "extract-visible-text.fn.js");
 }
 
 function discoveryFailureHint(err: unknown, detail: string): string {
