@@ -9,6 +9,12 @@ import {
 } from "@/lib/playwright/spa";
 import { dismissOverlays } from "@/lib/playwright/overlays";
 import { fetchAndStoreSiteLogo } from "@/lib/playwright/favicon";
+import {
+  crawlNavigationFallback,
+  crawlNavigationPrimary,
+  extractInteractivesInBrowser,
+  extractVisibleTextInBrowser,
+} from "@/lib/playwright/browser-eval/discovery.browser.js";
 import type { ApplicationMap, DiscoveredPage, InteractiveElement } from "@/types";
 import type { Reporter as PipelineReporter } from "@/lib/workflow/context";
 
@@ -207,21 +213,7 @@ export async function crawlNavigation(
 ): Promise<NavLink[]> {
   await waitForAppReady(page);
 
-  const primary = await page.evaluate((selectors) => {
-    const seen = new Set<string>();
-    const out: NavLink[] = [];
-    for (const sel of selectors) {
-      document.querySelectorAll<HTMLAnchorElement>(sel).forEach((a) => {
-        const label = (a.textContent || "").trim().replace(/\s+/g, " ");
-        const href = a.href;
-        if (!label || !href) return;
-        if (seen.has(href)) return;
-        seen.add(href);
-        out.push({ label: label.slice(0, 60), href });
-      });
-    }
-    return out;
-  }, NAV_SELECTORS);
+  const primary = await page.evaluate(crawlNavigationPrimary, NAV_SELECTORS);
 
   if (primary.length >= 3) {
     await reporter?.log(
@@ -230,50 +222,7 @@ export async function crawlNavigation(
     return primary.slice(0, 12);
   }
 
-  const fallback = await page.evaluate((pageOrigin) => {
-    const authPattern =
-      /\/(login|sign-?in|register|sign-?up|logout)(\/|$|\?)/i;
-    const byHref = new Map<string, NavLink & { score: number; isAuth: boolean }>();
-
-    document.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((a) => {
-      const href = a.href;
-      if (!href.startsWith(pageOrigin)) return;
-      if (href.startsWith("mailto:") || href.startsWith("tel:")) return;
-      const label = (a.textContent || "").trim().replace(/\s+/g, " ");
-      if (label.length < 2 || label.length > 60) return;
-
-      let score = 0;
-      let el: Element | null = a;
-      while (el) {
-        if (
-          el.matches("nav, header, aside, [role=navigation], main")
-        ) {
-          score += 10;
-        }
-        el = el.parentElement;
-      }
-
-      let pathname = href;
-      try {
-        pathname = new URL(href).pathname;
-      } catch {
-        /* keep href */
-      }
-      const isAuth = authPattern.test(pathname);
-      const entry = {
-        label: label.slice(0, 60),
-        href,
-        score,
-        isAuth,
-      };
-      const prev = byHref.get(href);
-      if (!prev || entry.score > prev.score) {
-        byHref.set(href, entry);
-      }
-    });
-
-    return Array.from(byHref.values()).sort((a, b) => b.score - a.score);
-  }, origin);
+  const fallback = await page.evaluate(crawlNavigationFallback, origin);
 
   const seen = new Set(primary.map((l) => l.href));
   const merged: NavLink[] = [...primary];
@@ -311,99 +260,12 @@ export async function captureScreenshots(
 export async function extractInteractives(
   page: Page,
 ): Promise<InteractiveElement[]> {
-  // page.evaluate callbacks must not use `function` declarations — tsx/esbuild
-  // injects __name(), which is undefined in the browser sandbox.
-  return page.evaluate(() => {
-    const seen = new Set<string>();
-    const out: { role: string; name: string; tag: string }[] = [];
-    const selectors = [
-      "button",
-      "a[href]",
-      "input:not([type=hidden])",
-      "textarea",
-      '[role="button"]',
-      '[role="link"]',
-      '[role="tab"]',
-    ];
-
-    const accessibleName = (el: Element): string => {
-      const aria = el.getAttribute("aria-label");
-      if (aria) return aria.trim();
-      const labelled = el.getAttribute("aria-labelledby");
-      if (labelled) {
-        const labelEl = document.getElementById(labelled);
-        if (labelEl?.textContent) return labelEl.textContent.trim();
-      }
-      const text = (el.textContent || "").trim().replace(/\s+/g, " ");
-      if (text) return text.slice(0, 60);
-      const placeholder = (el as HTMLInputElement).placeholder;
-      return placeholder?.trim().slice(0, 60) ?? "";
-    };
-
-    const isVisible = (el: Element): boolean => {
-      const html = el as HTMLElement;
-      if (!html.offsetParent && html.tagName !== "BODY") return false;
-      const style = window.getComputedStyle(html);
-      return style.visibility !== "hidden" && style.display !== "none";
-    };
-
-    for (const sel of selectors) {
-      document.querySelectorAll(sel).forEach((el) => {
-        if (!isVisible(el)) return;
-        const name = accessibleName(el);
-        if (name.length < 2) return;
-        const role =
-          el.getAttribute("role") ||
-          (el.tagName === "A"
-            ? "link"
-            : el.tagName === "INPUT" || el.tagName === "TEXTAREA"
-              ? "textbox"
-              : "button");
-        const tag =
-          el.getAttribute("role") === "tab"
-            ? "tab"
-            : el.tagName.toLowerCase();
-        const key = `${role}:${name}`;
-        if (seen.has(key)) return;
-        seen.add(key);
-        out.push({ role, name, tag });
-      });
-      if (out.length >= 30) break;
-    }
-
-    return out.slice(0, 30);
-  });
+  return page.evaluate(extractInteractivesInBrowser);
 }
 
 /** Extract trimmed visible text from the current page. */
 export async function extractVisibleText(page: Page): Promise<string[]> {
-  return page.evaluate(() => {
-    const out: string[] = [];
-    const walker = document.createTreeWalker(
-      document.body,
-      NodeFilter.SHOW_ELEMENT,
-    );
-    const tags = new Set([
-      "H1",
-      "H2",
-      "H3",
-      "BUTTON",
-      "A",
-      "LABEL",
-      "TH",
-      "LEGEND",
-    ]);
-    let node = walker.nextNode();
-    while (node && out.length < 80) {
-      const el = node as HTMLElement;
-      if (tags.has(el.tagName)) {
-        const text = (el.innerText || "").trim().replace(/\s+/g, " ");
-        if (text && text.length <= 80) out.push(text);
-      }
-      node = walker.nextNode();
-    }
-    return Array.from(new Set(out));
-  });
+  return page.evaluate(extractVisibleTextInBrowser);
 }
 
 function discoveryFailureHint(err: unknown, detail: string): string {

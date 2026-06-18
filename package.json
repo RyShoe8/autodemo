@@ -9,6 +9,7 @@
     "start": "next start",
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
+    "verify:browser-eval": "node scripts/verify-browser-eval.mjs",
     "worker": "tsx worker/index.ts",
     "worker:dev": "tsx watch worker/index.ts"
   },
