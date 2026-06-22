@@ -33,12 +33,23 @@ const NAV_SELECTORS = [
   ".sidebar a",
 ];
 
-async function hasPasswordField(page: Page): Promise<boolean> {
-  if ((await page.locator('input[type="password"]').count()) > 0) return true;
-  const frames = page.frames();
-  for (const frame of frames) {
+const EMAIL_FIELD_SELECTORS = [
+  'input[type="email"]',
+  'input[autocomplete="username"]',
+  'input[name="email"]',
+  'input[name="username"]',
+  'input[type="text"]',
+];
+
+async function hasVisiblePasswordField(page: Page): Promise<boolean> {
+  if ((await page.locator('input[type="password"]:visible').count()) > 0) {
+    return true;
+  }
+  for (const frame of page.frames()) {
     if (frame === page.mainFrame()) continue;
-    if ((await frame.locator('input[type="password"]').count()) > 0) return true;
+    if ((await frame.locator('input[type="password"]:visible').count()) > 0) {
+      return true;
+    }
   }
   return false;
 }
@@ -55,7 +66,75 @@ async function hasLoggedInSignals(page: Page): Promise<boolean> {
   return (await logoutLink.count()) > 0;
 }
 
-async function waitForLoginResult(page: Page): Promise<boolean> {
+async function hasAppNavShell(page: Page): Promise<boolean> {
+  const navCount = await page
+    .locator('nav a, header a, [role="navigation"] a, aside a')
+    .count();
+  if (navCount >= 3) return true;
+
+  const appLink = page.getByRole("link", {
+    name: /workspace|dashboard|home|projects/i,
+  });
+  return (await appLink.count()) > 0;
+}
+
+async function verifyAuthenticated(
+  page: Page,
+  origin: string,
+): Promise<{ ok: boolean; reason: string }> {
+  const visiblePassword = await hasVisiblePasswordField(page);
+  if (!visiblePassword && (await hasAppNavShell(page))) {
+    return { ok: true, reason: "app nav visible without login form" };
+  }
+  if (!visiblePassword && (await hasLoggedInSignals(page))) {
+    return { ok: true, reason: "logged-in UI signals detected" };
+  }
+
+  const probeUrls = [origin, `${origin}/workspace`, `${origin}/dashboard`];
+  for (const probeUrl of probeUrls) {
+    try {
+      await page.goto(probeUrl, { waitUntil: "load", timeout: 15000 });
+      await waitForAppReady(page);
+      const pathname = new URL(page.url()).pathname;
+      const onAuthRoute = AUTH_ROUTE_PATTERN.test(pathname);
+      const hasVisiblePassword = await hasVisiblePasswordField(page);
+      if (!onAuthRoute && !hasVisiblePassword) {
+        return { ok: true, reason: `probe navigated to ${page.url()}` };
+      }
+      if (!hasVisiblePassword && (await hasAppNavShell(page))) {
+        return { ok: true, reason: `probe at ${page.url()} shows app shell` };
+      }
+    } catch {
+      /* try next probe URL */
+    }
+  }
+
+  return { ok: false, reason: "probe did not reach authenticated view" };
+}
+
+async function logLoginFailureState(
+  page: Page,
+  reporter: PipelineReporter,
+): Promise<void> {
+  let pathname = page.url();
+  try {
+    pathname = new URL(page.url()).pathname;
+  } catch {
+    /* keep url */
+  }
+  const visiblePassword = await hasVisiblePasswordField(page);
+  const navCount = await page
+    .locator("nav a, header a, aside a, [role=navigation] a")
+    .count();
+  await reporter.log(
+    `Login diagnostics — path: ${pathname}, visible password: ${visiblePassword}, nav links: ${navCount}.`,
+  );
+}
+
+async function waitForLoginResult(
+  page: Page,
+  origin: string,
+): Promise<boolean> {
   const deadline = Date.now() + 12000;
   while (Date.now() < deadline) {
     const currentUrl = page.url();
@@ -67,7 +146,7 @@ async function waitForLoginResult(page: Page): Promise<boolean> {
     }
 
     const onAuthRoute = AUTH_ROUTE_PATTERN.test(pathname);
-    const hasPassword = await hasPasswordField(page);
+    const hasPassword = await hasVisiblePasswordField(page);
     const loggedIn = await hasLoggedInSignals(page);
 
     const hasError = await page
@@ -81,11 +160,14 @@ async function waitForLoginResult(page: Page): Promise<boolean> {
 
     if (hasError) return false;
     if (loggedIn) return true;
+    if (!hasPassword && (await hasAppNavShell(page))) return true;
     if (!onAuthRoute && !hasPassword) return true;
 
     await page.waitForTimeout(500);
   }
-  return false;
+
+  const probe = await verifyAuthenticated(page, origin);
+  return probe.ok;
 }
 
 interface LoginFields {
@@ -94,27 +176,39 @@ interface LoginFields {
   inIframe: boolean;
 }
 
+async function findVisibleEmailField(
+  scope: Page | import("playwright").Frame,
+): Promise<ReturnType<Page["locator"]> | null> {
+  for (const sel of EMAIL_FIELD_SELECTORS) {
+    const field = scope.locator(sel).first();
+    if (await field.isVisible().catch(() => false)) {
+      return field as ReturnType<Page["locator"]>;
+    }
+  }
+  return null;
+}
+
 async function findLoginFields(page: Page): Promise<LoginFields | null> {
-  const mainPassword = page.locator('input[type="password"]').first();
+  const mainPassword = page.locator('input[type="password"]:visible').first();
   if ((await mainPassword.count()) > 0) {
-    const emailField = page
-      .locator(
-        'input[type="email"], input[name="email"], input[name="username"], input[type="text"]',
-      )
-      .first();
+    const emailField =
+      (await findVisibleEmailField(page)) ??
+      page.locator(EMAIL_FIELD_SELECTORS.join(", ")).first();
     return { emailField, passwordField: mainPassword, inIframe: false };
   }
 
   for (const frame of page.frames()) {
     if (frame === page.mainFrame()) continue;
-    const framePassword = frame.locator('input[type="password"]').first();
+    const framePassword = frame.locator('input[type="password"]:visible').first();
     if ((await framePassword.count()) > 0) {
-      const emailField = frame
-        .locator(
-          'input[type="email"], input[name="email"], input[name="username"], input[type="text"]',
-        )
-        .first();
-      return { emailField, passwordField: framePassword, inIframe: true };
+      const emailField =
+        (await findVisibleEmailField(frame)) ??
+        frame.locator(EMAIL_FIELD_SELECTORS.join(", ")).first();
+      return {
+        emailField: emailField as ReturnType<Page["locator"]>,
+        passwordField: framePassword as ReturnType<Page["locator"]>,
+        inIframe: true,
+      };
     }
   }
 
@@ -122,8 +216,27 @@ async function findLoginFields(page: Page): Promise<LoginFields | null> {
 }
 
 async function submitLoginForm(page: Page, fields: LoginFields): Promise<void> {
-  await fields.passwordField.press("Enter");
+  const submitBtn = page.locator('button[type="submit"]:visible').first();
+  if (
+    (await submitBtn.count()) > 0 &&
+    (await submitBtn.isVisible().catch(() => false))
+  ) {
+    await submitBtn.click({ timeout: 8000 }).catch(() => {});
+  } else {
+    const signInBtn = page
+      .getByRole("button", { name: /sign in|log in|continue/i })
+      .first();
+    if (
+      (await signInBtn.count()) > 0 &&
+      (await signInBtn.isVisible().catch(() => false))
+    ) {
+      await signInBtn.click({ timeout: 8000 }).catch(() => {});
+    } else {
+      await fields.passwordField.press("Enter");
+    }
+  }
   await waitForAppReady(page);
+  await page.waitForTimeout(500);
 }
 
 /** Attempt to detect and complete a login form on the current page. */
@@ -132,6 +245,7 @@ export async function login(
   email: string,
   password: string,
   reporter: PipelineReporter,
+  options?: { projectId?: string },
 ): Promise<boolean> {
   if (!password) {
     await reporter.missing("target application password");
@@ -164,7 +278,7 @@ export async function login(
     await reporter.log("Submitting login form…");
     await submitLoginForm(page, fields);
 
-    let success = await waitForLoginResult(page);
+    let success = await waitForLoginResult(page, origin);
     if (!success) {
       await reporter.log("Login may have failed — retrying once…");
       await waitForAppReady(page);
@@ -175,13 +289,38 @@ export async function login(
         }
         await retryFields.passwordField.fill(password);
         await submitLoginForm(page, retryFields);
-        success = await waitForLoginResult(page);
+        success = await waitForLoginResult(page, origin);
       }
     }
 
     if (success) {
       await reporter.log(`Login succeeded (now at ${page.url()}).`);
       return true;
+    }
+
+    const probe = await verifyAuthenticated(page, origin);
+    if (probe.ok) {
+      await reporter.log(
+        `Login verified via navigation probe (SPA): ${probe.reason}.`,
+      );
+      return true;
+    }
+
+    await logLoginFailureState(page, reporter);
+    await reporter.log(`Probe result: ${probe.reason}.`);
+
+    if (options?.projectId) {
+      try {
+        const buffer = await page.screenshot({ fullPage: false });
+        await storage.save(
+          `projects/${options.projectId}/discovery/login-attempt.png`,
+          buffer,
+          "image/png",
+        );
+        await reporter.log("Saved login-attempt.png for debugging.");
+      } catch {
+        /* non-fatal */
+      }
     }
 
     await reporter.log(
@@ -313,7 +452,21 @@ export async function discoverApplication(
     await reporter.log(`Navigating to ${url}`);
     await navigateAndWait(page, url);
 
-    await login(page, email, password, reporter);
+    let loggedIn = await login(page, email, password, reporter, { projectId });
+    if (!loggedIn) {
+      const probe = await verifyAuthenticated(page, origin);
+      if (probe.ok) {
+        await reporter.log(
+          `Login verified via navigation probe (SPA): ${probe.reason}.`,
+        );
+        loggedIn = true;
+      } else {
+        await reporter.log(
+          `Warning: discovery may be unauthenticated — ${probe.reason}.`,
+        );
+      }
+    }
+
     await waitForAppReady(page);
 
     const navLinks = await crawlNavigation(page, origin, reporter);

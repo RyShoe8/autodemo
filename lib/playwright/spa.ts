@@ -38,8 +38,17 @@ export async function navigateAndWait(page: Page, url: string): Promise<void> {
   await dismissOverlays(page);
 }
 
-async function hasLoginForm(page: Page): Promise<boolean> {
-  return (await page.locator('input[type="password"]').count()) > 0;
+async function hasVisibleLoginForm(page: Page): Promise<boolean> {
+  if ((await page.locator('input[type="password"]:visible').count()) > 0) {
+    return true;
+  }
+  for (const frame of page.frames()) {
+    if (frame === page.mainFrame()) continue;
+    if ((await frame.locator('input[type="password"]:visible').count()) > 0) {
+      return true;
+    }
+  }
+  return false;
 }
 
 /**
@@ -50,13 +59,13 @@ export async function resolveLoginPage(
   origin: string,
   reporter: Reporter,
 ): Promise<boolean> {
-  if (await hasLoginForm(page)) return true;
+  if (await hasVisibleLoginForm(page)) return true;
 
   const signInLink = page.getByRole("link", { name: SIGN_IN_PATTERN }).first();
   if ((await signInLink.count()) > 0) {
     await signInLink.click().catch(() => {});
     await waitForAppReady(page);
-    if (await hasLoginForm(page)) {
+    if (await hasVisibleLoginForm(page)) {
       await reporter.log(
         `Navigated to login via sign-in link (${page.url()}).`,
       );
@@ -70,7 +79,7 @@ export async function resolveLoginPage(
   if ((await signInButton.count()) > 0) {
     await signInButton.click().catch(() => {});
     await waitForAppReady(page);
-    if (await hasLoginForm(page)) {
+    if (await hasVisibleLoginForm(page)) {
       await reporter.log(
         `Navigated to login via sign-in button (${page.url()}).`,
       );
@@ -80,7 +89,7 @@ export async function resolveLoginPage(
 
   for (const path of LOGIN_PATHS) {
     await navigateAndWait(page, `${origin}${path}`);
-    if (await hasLoginForm(page)) {
+    if (await hasVisibleLoginForm(page)) {
       await reporter.log(`Navigated to login via ${path}.`);
       return true;
     }
