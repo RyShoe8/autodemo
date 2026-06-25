@@ -10,6 +10,7 @@ import { ProjectInfo } from "@/components/projects/project-info";
 import { ProjectBumperPanel } from "@/components/projects/project-bumper-panel";
 import { ProjectDiscoveryPanel } from "@/components/projects/project-discovery-panel";
 import { VideoList } from "@/components/projects/video-list";
+import { ProjectCatalogPanel } from "@/components/projects/project-catalog-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -50,6 +51,7 @@ export default async function ProjectDetailPage({
         </div>
         <div className="space-y-6">
           <ProjectDiscoveryPanel projectId={id} status={project.status} />
+          <ProjectCatalogPanel applicationMap={record.applicationMap} />
         </div>
       </div>
     </div>

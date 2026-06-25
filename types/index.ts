@@ -76,10 +76,17 @@ export interface WorkflowStep {
   order: number;
 }
 
+export interface ActionScreenshot {
+  type: "modal" | "popup" | "page";
+  triggerText: string;
+  screenshot: string;
+}
+
 export interface DiscoveredPage {
   url: string;
   title: string;
   screenshot?: string;
+  actionScreenshots?: ActionScreenshot[];
 }
 
 export interface NavLink {

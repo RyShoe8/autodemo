@@ -11,7 +11,7 @@ import { dismissOverlays } from "@/lib/playwright/overlays";
 import { fetchAndStoreSiteLogo } from "@/lib/playwright/favicon";
 import { browserEval } from "@/lib/playwright/browser-eval/run";
 import { launchChromium } from "@/lib/playwright/browser";
-import type { ApplicationMap, DiscoveredPage, InteractiveElement } from "@/types";
+import type { ApplicationMap, DiscoveredPage, InteractiveElement, ActionScreenshot } from "@/types";
 import type { Reporter as PipelineReporter } from "@/lib/workflow/context";
 
 export interface DiscoverOptions {
@@ -388,7 +388,7 @@ export async function captureScreenshots(
   projectId: string,
   index: number,
 ): Promise<string> {
-  const buffer = await page.screenshot({ fullPage: false });
+  const buffer = await page.screenshot({ fullPage: true });
   const { url } = await storage.save(
     `projects/${projectId}/discovery/page-${index}.png`,
     buffer,
@@ -486,12 +486,59 @@ export async function discoverApplication(
       }
     }
 
+    async function captureActionScreenshots(pageUrl: string, pageIndex: number): Promise<ActionScreenshot[]> {
+      const actionScreenshots: ActionScreenshot[] = [];
+      const interactives = await extractInteractives(page);
+      
+      const triggers = interactives.filter(i => {
+        if (i.role === 'button' || i.tag.toLowerCase() === 'button') {
+          const lower = i.name.toLowerCase();
+          return ['add', 'new', 'create', 'edit', 'settings', 'menu', 'filter', 'options'].some(keyword => lower.includes(keyword));
+        }
+        return false;
+      }).slice(0, 4);
+
+      for (let i = 0; i < triggers.length; i++) {
+        const trigger = triggers[i];
+        try {
+          const el = page.locator(`text="${trigger.name}"`).first();
+          if (await el.isVisible().catch(() => false)) {
+            await reporter.log(`Clicking potential trigger: "${trigger.name}"...`);
+            await el.click({ timeout: 2000 });
+            await page.waitForTimeout(800);
+            
+            const buffer = await page.screenshot({ fullPage: true });
+            const { url } = await storage.save(
+              `projects/${projectId}/discovery/page-${pageIndex}-action-${i}.png`,
+              buffer,
+              "image/png"
+            );
+            actionScreenshots.push({
+              type: "modal",
+              triggerText: trigger.name,
+              screenshot: url
+            });
+            
+            await page.goto(pageUrl, { waitUntil: "load" });
+            await waitForAppReady(page);
+          }
+        } catch (err) {
+          // ignore error and continue
+        }
+      }
+      return actionScreenshots;
+    }
+
+    const homeUrl = page.url();
     const homeShot = await captureScreenshots(page, projectId, 0);
     await capturePageState();
+    const homeActions = await captureActionScreenshots(homeUrl, 0);
+    
     pages.push({
-      url: page.url(),
+      url: homeUrl,
       title: await page.title(),
       screenshot: homeShot,
+      actionScreenshots: homeActions,
     });
     screenshots.push(homeShot);
 
@@ -501,12 +548,16 @@ export async function discoverApplication(
       try {
         if (!link.href.startsWith(origin)) continue;
         await navigateAndWait(page, link.href);
+        const pageUrl = page.url();
         const shot = await captureScreenshots(page, projectId, captured);
         await capturePageState();
+        const actions = await captureActionScreenshots(pageUrl, captured);
+        
         pages.push({
-          url: page.url(),
+          url: pageUrl,
           title: (await page.title()) || link.label,
           screenshot: shot,
+          actionScreenshots: actions,
         });
         screenshots.push(shot);
         await reporter.log(`Captured "${link.label}"`);
