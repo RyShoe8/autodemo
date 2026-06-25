@@ -26,7 +26,9 @@ Rules:
 4. If you want to click a button or link, return action: "click".
 5. If you want to type into a textbox or search bar, return action: "type" and provide a realistic "value" to type.
 6. If there are no new interesting elements to explore and you feel you have exhausted the application, return action: "done".
-7. Prioritize elements that likely open modals, navigate to new pages, or create new items (e.g., "New", "Create", "Settings", "Add", "Edit", "Menu").`;
+7. Prioritize elements that likely open modals, navigate to new pages, or create new items (e.g., "New", "Create", "Settings", "Add", "Edit", "Menu").
+8. HIGHEST PRIORITY: If you see links or buttons leading to the main application interface (e.g., "Dashboard", "Portal", "Console", "App", "Go to App"), click them immediately.
+9. LOWEST PRIORITY: Avoid public marketing links (e.g., "Pricing", "About Us", "Start Free Trial", "Features") unless there's nothing else to explore.`;
 
 export async function resolveDiscoveryNextAction(
   currentUrl: string,

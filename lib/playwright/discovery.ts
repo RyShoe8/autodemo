@@ -496,7 +496,7 @@ export async function discoverApplication(
       let currentPageRef: DiscoveredPage | null = null;
       let actionCount = 0;
 
-      while (captured < maxPages && actionCount < 15) {
+      while (captured < maxPages && actionCount < 100) {
         await waitForAppReady(page);
         const currentUrl = page.url();
 
