@@ -12,6 +12,8 @@ import { fetchAndStoreSiteLogo } from "@/lib/playwright/favicon";
 import { browserEval } from "@/lib/playwright/browser-eval/run";
 import { launchChromium } from "@/lib/playwright/browser";
 import type { ApplicationMap, DiscoveredPage, InteractiveElement, ActionScreenshot } from "@/types";
+import { env, flags } from "@/lib/env";
+import { resolveDiscoveryNextAction } from "@/lib/openai/discovery-agent";
 import type { Reporter as PipelineReporter } from "@/lib/workflow/context";
 
 export interface DiscoverOptions {
@@ -469,9 +471,6 @@ export async function discoverApplication(
 
     await waitForAppReady(page);
 
-    const navLinks = await crawlNavigation(page, origin, reporter);
-    await reporter.log(`Found ${navLinks.length} navigation links.`);
-
     const pages: DiscoveredPage[] = [];
     const screenshots: string[] = [];
     const uiText = new Set<string>();
@@ -486,84 +485,175 @@ export async function discoverApplication(
       }
     }
 
-    async function captureActionScreenshots(pageUrl: string, pageIndex: number): Promise<ActionScreenshot[]> {
-      const actionScreenshots: ActionScreenshot[] = [];
-      const interactives = await extractInteractives(page);
-      
-      const triggers = interactives.filter(i => {
-        if (i.role === 'button' || i.tag.toLowerCase() === 'button') {
-          const lower = i.name.toLowerCase();
-          return ['add', 'new', 'create', 'edit', 'settings', 'menu', 'filter', 'options'].some(keyword => lower.includes(keyword));
-        }
-        return false;
-      }).slice(0, 4);
+    let captured = 0;
+    let navLinks: NavLink[] = [];
 
-      for (let i = 0; i < triggers.length; i++) {
-        const trigger = triggers[i];
+    if (flags.hasOpenAI) {
+      await reporter.log(`Starting autonomous AI discovery...`);
+      const history: string[] = [];
+      let currentPageBaseUrl = "";
+      let currentPageRef: DiscoveredPage | null = null;
+      let actionCount = 0;
+
+      while (captured < maxPages && actionCount < 15) {
+        await waitForAppReady(page);
+        const currentUrl = page.url();
+
+        if (currentUrl !== currentPageBaseUrl || !currentPageRef) {
+          const homeShot = await captureScreenshots(page, projectId, captured);
+          await capturePageState();
+          currentPageRef = {
+            url: currentUrl,
+            title: await page.title(),
+            screenshot: homeShot,
+            actionScreenshots: [],
+          };
+          pages.push(currentPageRef);
+          screenshots.push(homeShot);
+          currentPageBaseUrl = currentUrl;
+          captured++;
+          await reporter.log(`Captured base page: "${currentPageRef.title}"`);
+        }
+
+        const interactives = await extractInteractives(page);
+        const nextAction = await resolveDiscoveryNextAction(currentUrl, history, interactives);
+
+        if (!nextAction || nextAction.action === "done") {
+          await reporter.log(`AI agent finished exploration: ${nextAction?.reason || "exhausted"}`);
+          break;
+        }
+
+        actionCount++;
+        const actionDesc = nextAction.action === "type"
+          ? `Typed "${nextAction.value}" into ${nextAction.role} "${nextAction.name}"`
+          : `Clicked ${nextAction.role} "${nextAction.name}"`;
+
+        await reporter.log(`AI Action: ${actionDesc} - Reason: ${nextAction.reason}`);
+        history.push(actionDesc);
+
         try {
-          const el = page.locator(`text="${trigger.name}"`).first();
-          if (await el.isVisible().catch(() => false)) {
-            await reporter.log(`Clicking potential trigger: "${trigger.name}"...`);
-            await el.click({ timeout: 2000 });
-            await page.waitForTimeout(800);
-            
-            const buffer = await page.screenshot({ fullPage: true, type: "jpeg", quality: 80 });
-            const { url } = await storage.save(
-              `projects/${projectId}/discovery/page-${pageIndex}-action-${i}.jpg`,
-              buffer,
-              "image/jpeg"
-            );
-            actionScreenshots.push({
-              type: "modal",
-              triggerText: trigger.name,
-              screenshot: url
-            });
-            
-            await page.goto(pageUrl, { waitUntil: "load" });
-            await waitForAppReady(page);
+          if (nextAction.name && nextAction.role) {
+            const loc = page.getByRole(nextAction.role as any, { name: nextAction.name, exact: false }).first();
+            if (await loc.isVisible().catch(() => false)) {
+              if (nextAction.action === "type" && nextAction.value) {
+                await loc.fill(nextAction.value, { timeout: 3000 });
+                await loc.press("Enter");
+              } else {
+                await loc.click({ timeout: 3000 });
+              }
+              await page.waitForTimeout(1000);
+              await waitForAppReady(page);
+
+              const newUrl = page.url();
+              if (newUrl === currentUrl && currentPageRef) {
+                const actionShotBuffer = await page.screenshot({ fullPage: true, type: "jpeg", quality: 80 });
+                const { url } = await storage.save(
+                  `projects/${projectId}/discovery/page-${captured}-action-${actionCount}.jpg`,
+                  actionShotBuffer,
+                  "image/jpeg"
+                );
+                currentPageRef.actionScreenshots!.push({
+                  type: "modal",
+                  triggerText: nextAction.name,
+                  screenshot: url
+                });
+                await reporter.log(`Captured action state for "${nextAction.name}"`);
+              } else if (newUrl !== currentUrl) {
+                await reporter.log(`Navigated to new page: ${newUrl}`);
+              }
+            } else {
+              await reporter.log(`Element ${nextAction.name} not visible. Skipping.`);
+            }
+          } else {
+            await reporter.log(`Missing role or name for action. Skipping.`);
           }
         } catch (err) {
-          // ignore error and continue
+          await reporter.log(`Action failed: ${err}`);
         }
       }
-      return actionScreenshots;
-    }
+    } else {
+      navLinks = await crawlNavigation(page, origin, reporter);
+      await reporter.log(`Found ${navLinks.length} navigation links.`);
 
-    const homeUrl = page.url();
-    const homeShot = await captureScreenshots(page, projectId, 0);
-    await capturePageState();
-    const homeActions = await captureActionScreenshots(homeUrl, 0);
-    
-    pages.push({
-      url: homeUrl,
-      title: await page.title(),
-      screenshot: homeShot,
-      actionScreenshots: homeActions,
-    });
-    screenshots.push(homeShot);
-
-    let captured = 1;
-    for (const link of navLinks) {
-      if (captured >= maxPages) break;
-      try {
-        if (!link.href.startsWith(origin)) continue;
-        await navigateAndWait(page, link.href);
-        const pageUrl = page.url();
-        const shot = await captureScreenshots(page, projectId, captured);
-        await capturePageState();
-        const actions = await captureActionScreenshots(pageUrl, captured);
+      async function captureActionScreenshots(pageUrl: string, pageIndex: number): Promise<ActionScreenshot[]> {
+        const actionScreenshots: ActionScreenshot[] = [];
+        const interactives = await extractInteractives(page);
         
-        pages.push({
-          url: pageUrl,
-          title: (await page.title()) || link.label,
-          screenshot: shot,
-          actionScreenshots: actions,
-        });
-        screenshots.push(shot);
-        await reporter.log(`Captured "${link.label}"`);
-        captured += 1;
-      } catch {
-        await reporter.log(`Skipped "${link.label}" (failed to load).`);
+        const triggers = interactives.filter(i => {
+          if (i.role === 'button' || i.tag.toLowerCase() === 'button') {
+            const lower = i.name.toLowerCase();
+            return ['add', 'new', 'create', 'edit', 'settings', 'menu', 'filter', 'options'].some(keyword => lower.includes(keyword));
+          }
+          return false;
+        }).slice(0, 4);
+
+        for (let i = 0; i < triggers.length; i++) {
+          const trigger = triggers[i];
+          try {
+            const el = page.locator(`text="${trigger.name}"`).first();
+            if (await el.isVisible().catch(() => false)) {
+              await reporter.log(`Clicking potential trigger: "${trigger.name}"...`);
+              await el.click({ timeout: 2000 });
+              await page.waitForTimeout(800);
+              
+              const buffer = await page.screenshot({ fullPage: true, type: "jpeg", quality: 80 });
+              const { url } = await storage.save(
+                `projects/${projectId}/discovery/page-${pageIndex}-action-${i}.jpg`,
+                buffer,
+                "image/jpeg"
+              );
+              actionScreenshots.push({
+                type: "modal",
+                triggerText: trigger.name,
+                screenshot: url
+              });
+              
+              await page.goto(pageUrl, { waitUntil: "load" });
+              await waitForAppReady(page);
+            }
+          } catch (err) {
+            // ignore error and continue
+          }
+        }
+        return actionScreenshots;
+      }
+
+      const homeUrl = page.url();
+      const homeShot = await captureScreenshots(page, projectId, captured);
+      await capturePageState();
+      const homeActions = await captureActionScreenshots(homeUrl, captured);
+      
+      pages.push({
+        url: homeUrl,
+        title: await page.title(),
+        screenshot: homeShot,
+        actionScreenshots: homeActions,
+      });
+      screenshots.push(homeShot);
+      captured++;
+
+      for (const link of navLinks) {
+        if (captured >= maxPages) break;
+        try {
+          if (!link.href.startsWith(origin)) continue;
+          await navigateAndWait(page, link.href);
+          const pageUrl = page.url();
+          const shot = await captureScreenshots(page, projectId, captured);
+          await capturePageState();
+          const actions = await captureActionScreenshots(pageUrl, captured);
+          
+          pages.push({
+            url: pageUrl,
+            title: (await page.title()) || link.label,
+            screenshot: shot,
+            actionScreenshots: actions,
+          });
+          screenshots.push(shot);
+          await reporter.log(`Captured "${link.label}"`);
+          captured++;
+        } catch {
+          await reporter.log(`Skipped "${link.label}" (failed to load).`);
+        }
       }
     }
 
