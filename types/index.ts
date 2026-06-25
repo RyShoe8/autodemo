@@ -109,6 +109,7 @@ export interface ApplicationMap {
   uiText: string[];
   /** Favicon fetched during discovery when no user logo exists. */
   discoveredLogoUrl?: string;
+  edges?: { from: string; to: string; label: string }[];
 }
 
 export interface ScriptScene {

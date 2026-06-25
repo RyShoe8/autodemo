@@ -487,6 +487,7 @@ export async function discoverApplication(
 
     let captured = 0;
     let navLinks: NavLink[] = [];
+    const edges: { from: string; to: string; label: string }[] = [];
 
     if (flags.hasOpenAI) {
       await reporter.log(`Starting autonomous AI discovery...`);
@@ -559,6 +560,7 @@ export async function discoverApplication(
                 });
                 await reporter.log(`Captured action state for "${nextAction.name}"`);
               } else if (newUrl !== currentUrl) {
+                edges.push({ from: currentUrl, to: newUrl, label: nextAction.name || "Navigation" });
                 await reporter.log(`Navigated to new page: ${newUrl}`);
               }
             } else {
@@ -681,6 +683,7 @@ export async function discoverApplication(
       screenshots,
       uiText: Array.from(uiText),
       discoveredLogoUrl,
+      edges: flags.hasOpenAI ? edges : undefined,
     };
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);

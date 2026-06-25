@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Pencil, FolderOpen } from "lucide-react";
+import { Pencil, FolderOpen, Map } from "lucide-react";
 import { db } from "@/lib/db";
 import { toProjectDTO, toProjectVideoDTO } from "@/lib/serialize";
 import { PageHeader } from "@/components/layout/page-header";
@@ -31,6 +31,11 @@ export default async function ProjectDetailPage({
         <Button asChild variant="outline">
           <Link href={`/projects/${id}/assets`}>
             <FolderOpen className="h-4 w-4 mr-2" /> Assets Library
+          </Link>
+        </Button>
+        <Button asChild variant="outline">
+          <Link href={`/projects/${id}/sitemap`}>
+            <Map className="h-4 w-4 mr-2" /> Site Web Map
           </Link>
         </Button>
         <Button asChild variant="outline">
