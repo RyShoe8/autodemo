@@ -169,9 +169,9 @@ async function waitForLoginResult(
 
     const hasError = await page
       .locator(
-        '.error, [role="alert"], .alert-error, .text-red-500, .text-destructive',
+        '.error, [role="alert"], .alert-error, .text-red-500, .text-destructive, [class*="error"], [class*="alert"]',
       )
-      .filter({ hasText: /invalid|incorrect|failed|wrong|error/i })
+      .filter({ hasText: /invalid|incorrect|failed|wrong|error|not found|match|credentials/i })
       .first()
       .isVisible()
       .catch(() => false);
@@ -331,9 +331,13 @@ export async function login(
     }
 
     if ((await fields.emailField.count()) > 0 && email) {
-      await fields.emailField.fill(email);
+      await fields.emailField.click({ force: true }).catch(() => {});
+      await fields.emailField.fill("");
+      await fields.emailField.pressSequentially(email, { delay: 50 }).catch(() => {});
     }
-    await fields.passwordField.fill(password);
+    await fields.passwordField.click({ force: true }).catch(() => {});
+    await fields.passwordField.fill("");
+    await fields.passwordField.pressSequentially(password, { delay: 50 }).catch(() => {});
     await reporter.log("Submitting login form…");
     await submitLoginForm(page, fields);
 
