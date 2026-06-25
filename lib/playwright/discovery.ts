@@ -56,6 +56,16 @@ async function hasVisiblePasswordField(page: Page): Promise<boolean> {
   return false;
 }
 
+async function hasLoggedOutSignals(page: Page): Promise<boolean> {
+  const loginLink = page.getByRole("link", { name: /log in|sign in|login|signin/i });
+  if ((await loginLink.count()) > 0 && await loginLink.first().isVisible().catch(() => false)) return true;
+  
+  const registerLink = page.getByRole("link", { name: /register|sign up|signup|get started/i });
+  if ((await registerLink.count()) > 0 && await registerLink.first().isVisible().catch(() => false)) return true;
+
+  return false;
+}
+
 async function hasLoggedInSignals(page: Page): Promise<boolean> {
   const userMenu = page.getByRole("button", {
     name: /account|profile|logout|sign out|log out|my account/i,
@@ -84,6 +94,10 @@ async function verifyAuthenticated(
   page: Page,
   origin: string,
 ): Promise<{ ok: boolean; reason: string }> {
+  if (await hasLoggedOutSignals(page)) {
+    return { ok: false, reason: "logged-out UI signals detected (e.g. Login link visible)" };
+  }
+
   const visiblePassword = await hasVisiblePasswordField(page);
   if (!visiblePassword && (await hasAppNavShell(page))) {
     return { ok: true, reason: "app nav visible without login form" };
@@ -100,6 +114,8 @@ async function verifyAuthenticated(
       const pathname = new URL(page.url()).pathname;
       const onAuthRoute = AUTH_ROUTE_PATTERN.test(pathname);
       const hasVisiblePassword = await hasVisiblePasswordField(page);
+      if (await hasLoggedOutSignals(page)) continue;
+
       if (!onAuthRoute && !hasVisiblePassword) {
         return { ok: true, reason: `probe navigated to ${page.url()}` };
       }
@@ -161,9 +177,11 @@ async function waitForLoginResult(
       .catch(() => false);
 
     if (hasError) return false;
+    if (await hasLoggedOutSignals(page)) return false;
     if (loggedIn) return true;
     if (!hasPassword && (await hasAppNavShell(page))) return true;
-    if (!onAuthRoute && !hasPassword) return true;
+    // We removed the overly optimistic check that was returning true for public marketing pages
+    // if (!onAuthRoute && !hasPassword) return true;
 
     await page.waitForTimeout(500);
   }
@@ -218,27 +236,24 @@ async function findLoginFields(page: Page): Promise<LoginFields | null> {
 }
 
 async function submitLoginForm(page: Page, fields: LoginFields): Promise<void> {
-  const submitBtn = page.locator('button[type="submit"]:visible').first();
-  if (
-    (await submitBtn.count()) > 0 &&
-    (await submitBtn.isVisible().catch(() => false))
-  ) {
-    await submitBtn.click({ timeout: 8000 }).catch(() => {});
-  } else {
+  // Always try pressing Enter first as it is the most reliable way to submit a React form
+  await fields.passwordField.press("Enter").catch(() => {});
+  await waitForAppReady(page);
+  await page.waitForTimeout(500);
+
+  // If the password field is still visible, the form didn't submit via Enter. Try clicking the button.
+  if (await fields.passwordField.isVisible().catch(() => false)) {
     const signInBtn = page
-      .getByRole("button", { name: /sign in|log in|continue/i })
+      .getByRole("button", { name: /sign in|log in|continue|submit/i })
       .first();
     if (
       (await signInBtn.count()) > 0 &&
       (await signInBtn.isVisible().catch(() => false))
     ) {
       await signInBtn.click({ timeout: 8000 }).catch(() => {});
-    } else {
-      await fields.passwordField.press("Enter");
+      await waitForAppReady(page);
     }
   }
-  await waitForAppReady(page);
-  await page.waitForTimeout(500);
 }
 
 /** Attempt to detect and complete a login form on the current page. */

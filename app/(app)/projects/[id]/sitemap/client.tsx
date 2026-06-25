@@ -65,6 +65,7 @@ export function SitemapClient({ pages, edges }: SitemapClientProps) {
     <>
       <div className="w-full h-[600px] border rounded-lg overflow-hidden bg-muted/20">
         <ReactFlow
+          colorMode="system"
           nodes={nodes}
           edges={flowEdges}
           onNodesChange={onNodesChange}
@@ -74,7 +75,7 @@ export function SitemapClient({ pages, edges }: SitemapClientProps) {
           attributionPosition="bottom-right"
         >
           <Background />
-          <Controls />
+          <Controls className="shadow-xl rounded-md bg-card border-border [&>button]:text-foreground [&>button]:border-b-border [&>button:hover]:bg-accent" />
         </ReactFlow>
       </div>
 
