@@ -177,7 +177,7 @@ async function waitForLoginResult(
       .catch(() => false);
 
     if (hasError) return false;
-    if (await hasLoggedOutSignals(page)) return false;
+    if (!onAuthRoute && await hasLoggedOutSignals(page)) return false;
     if (loggedIn) return true;
     if (!hasPassword && (await hasAppNavShell(page))) return true;
     // We removed the overly optimistic check that was returning true for public marketing pages
@@ -238,21 +238,27 @@ async function findLoginFields(page: Page): Promise<LoginFields | null> {
 async function submitLoginForm(page: Page, fields: LoginFields): Promise<void> {
   // Always try pressing Enter first as it is the most reliable way to submit a React form
   await fields.passwordField.press("Enter").catch(() => {});
+  await page.waitForTimeout(1000);
   await waitForAppReady(page);
-  await page.waitForTimeout(500);
 
   // If the password field is still visible, the form didn't submit via Enter. Try clicking the button.
   if (await fields.passwordField.isVisible().catch(() => false)) {
-    const signInBtn = page
-      .getByRole("button", { name: /sign in|log in|continue|submit/i })
-      .first();
-    if (
-      (await signInBtn.count()) > 0 &&
-      (await signInBtn.isVisible().catch(() => false))
-    ) {
-      await signInBtn.click({ timeout: 8000 }).catch(() => {});
-      await waitForAppReady(page);
+    const submitBtn = page.locator('button[type="submit"]:visible').first();
+    if ((await submitBtn.count()) > 0 && await submitBtn.isVisible().catch(() => false)) {
+       await submitBtn.click({ timeout: 8000 }).catch(() => {});
+    } else {
+      const signInBtn = page
+        .getByRole("button", { name: /sign in|log in|submit/i }) // removed "continue" to avoid OAuth buttons
+        .first();
+      if (
+        (await signInBtn.count()) > 0 &&
+        (await signInBtn.isVisible().catch(() => false))
+      ) {
+        await signInBtn.click({ timeout: 8000 }).catch(() => {});
+      }
     }
+    await page.waitForTimeout(1000);
+    await waitForAppReady(page);
   }
 }
 
