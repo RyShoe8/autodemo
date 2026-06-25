@@ -1,6 +1,6 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
-import { Pencil } from "lucide-react";
+import { Pencil, FolderOpen } from "lucide-react";
 import { db } from "@/lib/db";
 import { toProjectDTO, toProjectVideoDTO } from "@/lib/serialize";
 import { PageHeader } from "@/components/layout/page-header";
@@ -10,7 +10,6 @@ import { ProjectInfo } from "@/components/projects/project-info";
 import { ProjectBumperPanel } from "@/components/projects/project-bumper-panel";
 import { ProjectDiscoveryPanel } from "@/components/projects/project-discovery-panel";
 import { VideoList } from "@/components/projects/video-list";
-import { ProjectCatalogPanel } from "@/components/projects/project-catalog-panel";
 
 export const dynamic = "force-dynamic";
 
@@ -30,8 +29,13 @@ export default async function ProjectDetailPage({
       <PageHeader title={project.name} description={project.url}>
         <ProjectStatusBadge status={project.status} />
         <Button asChild variant="outline">
+          <Link href={`/projects/${id}/assets`}>
+            <FolderOpen className="h-4 w-4 mr-2" /> Assets Library
+          </Link>
+        </Button>
+        <Button asChild variant="outline">
           <Link href={`/projects/${id}/edit`}>
-            <Pencil className="h-4 w-4" /> Edit
+            <Pencil className="h-4 w-4 mr-2" /> Edit
           </Link>
         </Button>
       </PageHeader>
@@ -51,7 +55,6 @@ export default async function ProjectDetailPage({
         </div>
         <div className="space-y-6">
           <ProjectDiscoveryPanel projectId={id} status={project.status} />
-          <ProjectCatalogPanel applicationMap={record.applicationMap} />
         </div>
       </div>
     </div>

@@ -388,11 +388,11 @@ export async function captureScreenshots(
   projectId: string,
   index: number,
 ): Promise<string> {
-  const buffer = await page.screenshot({ fullPage: true });
+  const buffer = await page.screenshot({ fullPage: true, type: "jpeg", quality: 80 });
   const { url } = await storage.save(
-    `projects/${projectId}/discovery/page-${index}.png`,
+    `projects/${projectId}/discovery/page-${index}.jpg`,
     buffer,
-    "image/png",
+    "image/jpeg",
   );
   return url;
 }
@@ -507,11 +507,11 @@ export async function discoverApplication(
             await el.click({ timeout: 2000 });
             await page.waitForTimeout(800);
             
-            const buffer = await page.screenshot({ fullPage: true });
+            const buffer = await page.screenshot({ fullPage: true, type: "jpeg", quality: 80 });
             const { url } = await storage.save(
-              `projects/${projectId}/discovery/page-${pageIndex}-action-${i}.png`,
+              `projects/${projectId}/discovery/page-${pageIndex}-action-${i}.jpg`,
               buffer,
-              "image/png"
+              "image/jpeg"
             );
             actionScreenshots.push({
               type: "modal",
