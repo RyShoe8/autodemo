@@ -198,9 +198,13 @@ interface LoginFields {
 
 async function findVisibleEmailField(
   scope: Page | import("playwright").Frame,
+  passwordField: import("playwright").Locator
 ): Promise<ReturnType<Page["locator"]> | null> {
+  const form = passwordField.locator('xpath=ancestor::form').first();
+  const searchScope = (await form.count().catch(() => 0)) > 0 ? form : scope;
+
   for (const sel of EMAIL_FIELD_SELECTORS) {
-    const field = scope.locator(sel).first();
+    const field = searchScope.locator(sel).first();
     if (await field.isVisible().catch(() => false)) {
       return field as ReturnType<Page["locator"]>;
     }
@@ -212,7 +216,7 @@ async function findLoginFields(page: Page): Promise<LoginFields | null> {
   const mainPassword = page.locator('input[type="password"]:visible').first();
   if ((await mainPassword.count()) > 0) {
     const emailField =
-      (await findVisibleEmailField(page)) ??
+      (await findVisibleEmailField(page, mainPassword)) ??
       page.locator(EMAIL_FIELD_SELECTORS.join(", ")).first();
     return { emailField, passwordField: mainPassword, inIframe: false };
   }
@@ -222,7 +226,7 @@ async function findLoginFields(page: Page): Promise<LoginFields | null> {
     const framePassword = frame.locator('input[type="password"]:visible').first();
     if ((await framePassword.count()) > 0) {
       const emailField =
-        (await findVisibleEmailField(frame)) ??
+        (await findVisibleEmailField(frame, framePassword)) ??
         frame.locator(EMAIL_FIELD_SELECTORS.join(", ")).first();
       return {
         emailField: emailField as ReturnType<Page["locator"]>,
@@ -236,27 +240,59 @@ async function findLoginFields(page: Page): Promise<LoginFields | null> {
 }
 
 async function submitLoginForm(page: Page, fields: LoginFields): Promise<void> {
-  // Always try pressing Enter first as it is the most reliable way to submit a React form
+  // Try blur and focus to trigger React events before Enter
+  await fields.passwordField.blur().catch(() => {});
+  await fields.passwordField.focus().catch(() => {});
   await fields.passwordField.press("Enter").catch(() => {});
   await page.waitForTimeout(1000);
   await waitForAppReady(page);
 
   // If the password field is still visible, the form didn't submit via Enter. Try clicking the button.
   if (await fields.passwordField.isVisible().catch(() => false)) {
-    const submitBtn = page.locator('button[type="submit"]:visible').first();
-    if ((await submitBtn.count()) > 0 && await submitBtn.isVisible().catch(() => false)) {
-       await submitBtn.click({ timeout: 8000 }).catch(() => {});
-    } else {
-      const signInBtn = page
-        .getByRole("button", { name: /sign in|log in|submit/i }) // removed "continue" to avoid OAuth buttons
-        .first();
-      if (
-        (await signInBtn.count()) > 0 &&
-        (await signInBtn.isVisible().catch(() => false))
-      ) {
-        await signInBtn.click({ timeout: 8000 }).catch(() => {});
+    const form = fields.passwordField.locator('xpath=ancestor::form').first();
+    
+    // 1. Look for type="submit" in the form
+    if ((await form.count().catch(() => 0)) > 0) {
+      const submitBtn = form.locator('button[type="submit"]:visible, input[type="submit"]:visible').first();
+      if ((await submitBtn.count()) > 0 && await submitBtn.isVisible().catch(() => false)) {
+        await submitBtn.click({ timeout: 8000 }).catch(() => {});
+        await page.waitForTimeout(1000);
+        await waitForAppReady(page);
+        return;
       }
     }
+
+    // 2. Look for type="submit" globally
+    const globalSubmitBtn = page.locator('button[type="submit"]:visible, input[type="submit"]:visible').first();
+    if ((await globalSubmitBtn.count()) > 0 && await globalSubmitBtn.isVisible().catch(() => false)) {
+      await globalSubmitBtn.click({ timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(1000);
+      await waitForAppReady(page);
+      return;
+    }
+
+    // 3. Look for a button with login text
+    const signInBtn = page
+      .getByRole("button", { name: /sign in|log in|login|signin|submit/i })
+      .first();
+    if (
+      (await signInBtn.count()) > 0 &&
+      (await signInBtn.isVisible().catch(() => false))
+    ) {
+      await signInBtn.click({ timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(1000);
+      await waitForAppReady(page);
+      return;
+    }
+
+    // 4. Look for ANY button inside the form
+    if ((await form.count().catch(() => 0)) > 0) {
+      const formBtn = form.locator('button:visible').first();
+      if ((await formBtn.count()) > 0 && await formBtn.isVisible().catch(() => false)) {
+        await formBtn.click({ timeout: 8000 }).catch(() => {});
+      }
+    }
+    
     await page.waitForTimeout(1000);
     await waitForAppReady(page);
   }
