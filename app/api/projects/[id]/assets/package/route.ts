@@ -3,7 +3,7 @@ import { db } from "@/lib/db";
 import { readAsset } from "@/lib/storage";
 
 // @ts-ignore
-import archiver from "archiver";
+const archiver = require("archiver");
 
 export async function GET(
   request: Request,

@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import { ReactFlow, Controls, Background, useNodesState, useEdgesState, MarkerType } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from "@/components/ui/dialog";
-import { assetDisplayUrl } from "@/lib/storage";
+import { assetDisplayUrl } from "@/lib/storage/urls";
 import type { DiscoveredPage } from "@/types";
 
 interface SitemapClientProps {
