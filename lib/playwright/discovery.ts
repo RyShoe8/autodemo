@@ -1,4 +1,4 @@
-import type { Browser, Page } from "playwright";
+import type { Browser, Locator, Page } from "playwright";
 import { storage } from "@/lib/storage";
 import { isBlobStorageError } from "@/lib/storage/blob-utils";
 import {
@@ -34,6 +34,10 @@ const NAV_SELECTORS = [
   "aside a",
   ".sidebar a",
 ];
+
+/** Elements that lead into third-party auth, registration, or password-reset flows. */
+export const AUTH_FLOW_ELEMENT_PATTERN =
+  /continue with|sign in with|google|apple|microsoft|github|\bsso\b|register|sign ?up|create account|forgot password|reset password/i;
 
 const EMAIL_FIELD_SELECTORS = [
   'input[type="email"]',
@@ -149,11 +153,46 @@ async function logLoginFailureState(
   );
 }
 
+const LOGIN_ERROR_SELECTOR =
+  '[role="alert"]:visible, .error:visible, .alert-error:visible, .text-destructive:visible';
+const LOGIN_ERROR_TEXT = /invalid|incorrect|wrong password|failed|no account|not found/i;
+
+/** Collect visible error texts matching login-failure wording, scoped to the login form when possible. */
+async function collectLoginErrorTexts(
+  page: Page,
+  formScope?: Locator,
+): Promise<string[]> {
+  const scope = formScope ?? page.locator("body");
+  try {
+    const errors = scope.locator(LOGIN_ERROR_SELECTOR).filter({
+      hasText: LOGIN_ERROR_TEXT,
+    });
+    const count = await errors.count();
+    const texts: string[] = [];
+    for (let i = 0; i < Math.min(count, 5); i++) {
+      const text = await errors
+        .nth(i)
+        .innerText()
+        .catch(() => "");
+      const trimmed = text.trim().slice(0, 120);
+      if (trimmed) texts.push(trimmed);
+    }
+    return texts;
+  } catch {
+    return [];
+  }
+}
+
 async function waitForLoginResult(
   page: Page,
   origin: string,
+  preSubmitErrors: string[],
+  reporter?: PipelineReporter,
 ): Promise<boolean> {
   const deadline = Date.now() + 12000;
+  const knownErrors = new Set(preSubmitErrors);
+  let pendingError: string | null = null;
+
   while (Date.now() < deadline) {
     const currentUrl = page.url();
     let pathname = currentUrl;
@@ -167,21 +206,25 @@ async function waitForLoginResult(
     const hasPassword = await hasVisiblePasswordField(page);
     const loggedIn = await hasLoggedInSignals(page);
 
-    const hasError = await page
-      .locator(
-        '.error, [role="alert"], .alert-error, .text-red-500, .text-destructive, [class*="error"], [class*="alert"]',
-      )
-      .filter({ hasText: /invalid|incorrect|failed|wrong|error|not found|match|credentials/i })
-      .first()
-      .isVisible()
-      .catch(() => false);
+    const currentErrors = await collectLoginErrorTexts(page);
+    const newError = currentErrors.find((t) => !knownErrors.has(t)) ?? null;
 
-    if (hasError) return false;
-    if (!onAuthRoute && await hasLoggedOutSignals(page)) return false;
+    if (newError) {
+      if (pendingError === newError) {
+        await reporter?.log(`Login error detected: "${newError}".`);
+        return false;
+      }
+      pendingError = newError;
+      await page.waitForTimeout(1000);
+      continue;
+    }
+    pendingError = null;
+
     if (loggedIn) return true;
     if (!hasPassword && (await hasAppNavShell(page))) return true;
-    // We removed the overly optimistic check that was returning true for public marketing pages
-    // if (!onAuthRoute && !hasPassword) return true;
+    if (!onAuthRoute && !hasPassword && !(await hasLoggedOutSignals(page))) {
+      return true;
+    }
 
     await page.waitForTimeout(500);
   }
@@ -239,63 +282,50 @@ async function findLoginFields(page: Page): Promise<LoginFields | null> {
   return null;
 }
 
+/** Exact-ish sign-in button label — must not match "Continue with Google" or "Don't have an account? Register". */
+const SIGN_IN_BUTTON_EXACT = /^\s*(sign in|log in|login|signin|submit)\s*$/i;
+
 async function submitLoginForm(page: Page, fields: LoginFields): Promise<void> {
-  // Try blur and focus to trigger React events before Enter
+  const form = fields.passwordField.locator("xpath=ancestor::form").first();
+  const hasForm = (await form.count().catch(() => 0)) > 0;
+
+  // 1. Prefer the real submit button (form-scoped first, then global).
+  const submitScopes = hasForm ? [form, page.locator("body")] : [page.locator("body")];
+  for (const scope of submitScopes) {
+    const submitBtn = scope
+      .locator('button[type="submit"]:visible, input[type="submit"]:visible')
+      .first();
+    if (
+      (await submitBtn.count().catch(() => 0)) > 0 &&
+      (await submitBtn.isVisible().catch(() => false))
+    ) {
+      await submitBtn.click({ timeout: 8000 }).catch(() => {});
+      await page.waitForTimeout(1000);
+      await waitForAppReady(page);
+      return;
+    }
+  }
+
+  // 2. Exact-label sign-in button (never matches OAuth/register labels).
+  const signInBtn = page
+    .getByRole("button", { name: SIGN_IN_BUTTON_EXACT })
+    .first();
+  if (
+    (await signInBtn.count()) > 0 &&
+    (await signInBtn.isVisible().catch(() => false))
+  ) {
+    await signInBtn.click({ timeout: 8000 }).catch(() => {});
+    await page.waitForTimeout(1000);
+    await waitForAppReady(page);
+    return;
+  }
+
+  // 3. Fallback: Enter on the password field (blur/focus first for React forms).
   await fields.passwordField.blur().catch(() => {});
   await fields.passwordField.focus().catch(() => {});
   await fields.passwordField.press("Enter").catch(() => {});
   await page.waitForTimeout(1000);
   await waitForAppReady(page);
-
-  // If the password field is still visible, the form didn't submit via Enter. Try clicking the button.
-  if (await fields.passwordField.isVisible().catch(() => false)) {
-    const form = fields.passwordField.locator('xpath=ancestor::form').first();
-    
-    // 1. Look for type="submit" in the form
-    if ((await form.count().catch(() => 0)) > 0) {
-      const submitBtn = form.locator('button[type="submit"]:visible, input[type="submit"]:visible').first();
-      if ((await submitBtn.count()) > 0 && await submitBtn.isVisible().catch(() => false)) {
-        await submitBtn.click({ timeout: 8000 }).catch(() => {});
-        await page.waitForTimeout(1000);
-        await waitForAppReady(page);
-        return;
-      }
-    }
-
-    // 2. Look for type="submit" globally
-    const globalSubmitBtn = page.locator('button[type="submit"]:visible, input[type="submit"]:visible').first();
-    if ((await globalSubmitBtn.count()) > 0 && await globalSubmitBtn.isVisible().catch(() => false)) {
-      await globalSubmitBtn.click({ timeout: 8000 }).catch(() => {});
-      await page.waitForTimeout(1000);
-      await waitForAppReady(page);
-      return;
-    }
-
-    // 3. Look for a button with login text
-    const signInBtn = page
-      .getByRole("button", { name: /sign in|log in|login|signin|submit/i })
-      .first();
-    if (
-      (await signInBtn.count()) > 0 &&
-      (await signInBtn.isVisible().catch(() => false))
-    ) {
-      await signInBtn.click({ timeout: 8000 }).catch(() => {});
-      await page.waitForTimeout(1000);
-      await waitForAppReady(page);
-      return;
-    }
-
-    // 4. Look for ANY button inside the form
-    if ((await form.count().catch(() => 0)) > 0) {
-      const formBtn = form.locator('button:visible').first();
-      if ((await formBtn.count()) > 0 && await formBtn.isVisible().catch(() => false)) {
-        await formBtn.click({ timeout: 8000 }).catch(() => {});
-      }
-    }
-    
-    await page.waitForTimeout(1000);
-    await waitForAppReady(page);
-  }
 }
 
 /** Attempt to detect and complete a login form on the current page. */
@@ -338,10 +368,12 @@ export async function login(
     await fields.passwordField.click({ force: true }).catch(() => {});
     await fields.passwordField.fill("");
     await fields.passwordField.pressSequentially(password, { delay: 50 }).catch(() => {});
+
+    const preSubmitErrors = await collectLoginErrorTexts(page);
     await reporter.log("Submitting login form…");
     await submitLoginForm(page, fields);
 
-    let success = await waitForLoginResult(page, origin);
+    let success = await waitForLoginResult(page, origin, preSubmitErrors, reporter);
     if (!success) {
       await reporter.log("Login may have failed — retrying once…");
       await waitForAppReady(page);
@@ -351,8 +383,9 @@ export async function login(
           await retryFields.emailField.fill(email);
         }
         await retryFields.passwordField.fill(password);
+        const retryPreErrors = await collectLoginErrorTexts(page);
         await submitLoginForm(page, retryFields);
-        success = await waitForLoginResult(page, origin);
+        success = await waitForLoginResult(page, origin, retryPreErrors, reporter);
       }
     }
 
@@ -550,35 +583,108 @@ export async function discoverApplication(
     let navLinks: NavLink[] = [];
     const edges: { from: string; to: string; label: string }[] = [];
 
-    if (flags.hasOpenAI) {
+    const isOnOrigin = () => {
+      try {
+        return new URL(page.url()).origin === origin;
+      } catch {
+        return false;
+      }
+    };
+
+    const returnToOrigin = async (fallbackUrl: string) => {
+      await page.goBack({ waitUntil: "load", timeout: 15000 }).catch(() => {});
+      if (!isOnOrigin()) {
+        await page
+          .goto(fallbackUrl, { waitUntil: "load", timeout: 30000 })
+          .catch(() => {});
+      }
+      await waitForAppReady(page);
+    };
+
+    if (flags.hasOpenAI && loggedIn) {
+      // Populate nav links first so the map always includes the app's modules.
+      navLinks = await crawlNavigation(page, origin, reporter);
+      await reporter.log(`Found ${navLinks.length} navigation links.`);
+      const appHomeUrl = page.url();
+
       await reporter.log(`Starting autonomous AI discovery...`);
       const history: string[] = [];
       let currentPageBaseUrl = "";
       let currentPageRef: DiscoveredPage | null = null;
       let actionCount = 0;
 
+      // Seed exploration: visit each primary module page before free exploration.
+      const moduleLinks = navLinks
+        .filter((l) => l.href.startsWith(origin))
+        .slice(0, Math.max(0, maxPages - 1));
+
+      const captureCurrentPage = async (): Promise<DiscoveredPage> => {
+        const shot = await captureScreenshots(page, projectId, captured);
+        await capturePageState();
+        const pageRef: DiscoveredPage = {
+          url: page.url(),
+          title: await page.title(),
+          screenshot: shot,
+          actionScreenshots: [],
+        };
+        pages.push(pageRef);
+        screenshots.push(shot);
+        currentPageBaseUrl = page.url();
+        captured++;
+        await reporter.log(`Captured base page: "${pageRef.title}"`);
+        return pageRef;
+      };
+
+      for (const link of moduleLinks) {
+        if (captured >= maxPages) break;
+        try {
+          await navigateAndWait(page, link.href);
+          if (!isOnOrigin()) continue;
+          currentPageRef = await captureCurrentPage();
+          edges.push({ from: appHomeUrl, to: page.url(), label: link.label });
+        } catch {
+          await reporter.log(`Skipped module "${link.label}" (failed to load).`);
+        }
+      }
+
+      // Return to the app home for free exploration.
+      if (page.url() !== appHomeUrl) {
+        await navigateAndWait(page, appHomeUrl);
+        currentPageBaseUrl = "";
+        currentPageRef = null;
+      }
+
+      const knownModules = navLinks.map((l) => l.label);
+
       while (captured < maxPages && actionCount < 100) {
         await waitForAppReady(page);
+
+        if (!isOnOrigin()) {
+          await reporter.log(`Left app origin (${page.url()}) — returning.`);
+          actionCount++;
+          await returnToOrigin(appHomeUrl);
+          if (!isOnOrigin()) {
+            await reporter.log("Could not return to app origin — stopping exploration.");
+            break;
+          }
+          continue;
+        }
+
         const currentUrl = page.url();
 
         if (currentUrl !== currentPageBaseUrl || !currentPageRef) {
-          const homeShot = await captureScreenshots(page, projectId, captured);
-          await capturePageState();
-          currentPageRef = {
-            url: currentUrl,
-            title: await page.title(),
-            screenshot: homeShot,
-            actionScreenshots: [],
-          };
-          pages.push(currentPageRef);
-          screenshots.push(homeShot);
-          currentPageBaseUrl = currentUrl;
-          captured++;
-          await reporter.log(`Captured base page: "${currentPageRef.title}"`);
+          currentPageRef = await captureCurrentPage();
         }
 
-        const interactives = await extractInteractives(page);
-        const nextAction = await resolveDiscoveryNextAction(currentUrl, history, interactives);
+        const interactives = (await extractInteractives(page)).filter(
+          (i) => !AUTH_FLOW_ELEMENT_PATTERN.test(i.name),
+        );
+        const nextAction = await resolveDiscoveryNextAction(
+          currentUrl,
+          history,
+          interactives,
+          { origin, knownModules },
+        );
 
         if (!nextAction || nextAction.action === "done") {
           await reporter.log(`AI agent finished exploration: ${nextAction?.reason || "exhausted"}`);
@@ -586,6 +692,29 @@ export async function discoverApplication(
         }
 
         actionCount++;
+
+        if (nextAction.name && AUTH_FLOW_ELEMENT_PATTERN.test(nextAction.name)) {
+          await reporter.log(`Blocked auth-flow action "${nextAction.name}".`);
+          history.push(`Blocked "${nextAction.name}" (auth flow)`);
+          continue;
+        }
+
+        let pathname = "";
+        try {
+          pathname = new URL(currentUrl).pathname;
+        } catch {
+          /* keep empty */
+        }
+        if (AUTH_ROUTE_PATTERN.test(pathname)) {
+          await reporter.log(
+            `On auth route (${pathname}) — returning to app instead of exploring it.`,
+          );
+          await navigateAndWait(page, appHomeUrl);
+          currentPageBaseUrl = "";
+          currentPageRef = null;
+          continue;
+        }
+
         const actionDesc = nextAction.action === "type"
           ? `Typed "${nextAction.value}" into ${nextAction.role} "${nextAction.name}"`
           : `Clicked ${nextAction.role} "${nextAction.name}"`;
@@ -607,6 +736,18 @@ export async function discoverApplication(
               await waitForAppReady(page);
 
               const newUrl = page.url();
+              if (!isOnOrigin()) {
+                await reporter.log(
+                  `Action "${nextAction.name}" left app origin (${newUrl}) — returning.`,
+                );
+                edges.push({ from: currentUrl, to: newUrl, label: `${nextAction.name} (external)` });
+                history.push(`"${nextAction.name}" led off-origin — do not repeat`);
+                await returnToOrigin(appHomeUrl);
+                currentPageBaseUrl = "";
+                currentPageRef = null;
+                continue;
+              }
+
               if (newUrl === currentUrl && currentPageRef) {
                 const actionShotBuffer = await page.screenshot({ fullPage: true, type: "jpeg", quality: 80 });
                 const { url } = await storage.save(
@@ -635,6 +776,11 @@ export async function discoverApplication(
         }
       }
     } else {
+      if (flags.hasOpenAI && !loggedIn) {
+        await reporter.log(
+          "Skipping AI exploration (unauthenticated) — using deterministic nav crawl instead.",
+        );
+      }
       navLinks = await crawlNavigation(page, origin, reporter);
       await reporter.log(`Found ${navLinks.length} navigation links.`);
 
