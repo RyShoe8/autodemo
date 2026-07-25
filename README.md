@@ -40,11 +40,23 @@ response (2xx vs 4xx), with DOM heuristics only as a tiebreaker; failures dump
 For apps behind **MFA / SSO / CAPTCHA**, capture a session manually:
 
 ```bash
-node scripts/capture-session.mjs https://app.example.com
+npm run capture-session -- https://app.example.com
 ```
 
 Log in by hand in the window that opens, press Enter, then paste the resulting
 `storage-state.json` into the project's **Edit → Browser session** section.
+
+> **Invisible CAPTCHAs (reCAPTCHA v3, hCaptcha, Turnstile) score the browser,
+> not the credentials.** A headless worker scores low and the login API rejects
+> it (typically `403 "Verification failed"`) before the password is ever
+> checked — no selector or timing fix can change that. Discovery detects this
+> and says so in the job log. The two supported fixes are importing a
+> manually-captured session (above), or allowlisting the worker on the target
+> app (e.g. skipping CAPTCHA verification for a known IP or a shared secret
+> header) if you control it.
+
+If a project has credentials configured but authentication fails, the discover
+job now **fails** instead of silently mapping the public marketing site.
 
 ### Site mapping
 

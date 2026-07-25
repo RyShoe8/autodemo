@@ -19,6 +19,8 @@ import {
   routeSlug,
 } from "@/lib/playwright/crawler";
 import {
+  VERIFICATION_FAILURE_TEXT,
+  detectBotProtection,
   dumpLoginEvidence,
   watchLoginNetwork,
   type LoginNetworkWatcher,
@@ -491,6 +493,26 @@ export async function login(
     await reporter.log(`Probe result: ${probe.reason}.`);
     await reporter.log(`Network: ${watcher.detail()}.`);
 
+    const failureBody = watcher.failureBody();
+    if (failureBody) {
+      await reporter.log(`Server response: ${failureBody}`);
+    }
+
+    // Distinguish "wrong password" from "the app blocked the robot", which no
+    // amount of form-filling can fix.
+    const botProtection = await detectBotProtection(page);
+    const verificationRejected = VERIFICATION_FAILURE_TEXT.test(failureBody);
+    if (botProtection.present || verificationRejected) {
+      const kind = botProtection.kind || "CAPTCHA/bot protection";
+      await reporter.log(
+        `${kind} detected on the login page — the server rejected the automated browser before checking the credentials.`,
+      );
+      await reporter.log(
+        `Fix: capture a session in a real browser (npm run capture-session -- ${origin}) and import it on the project's Edit page under "Browser session". Alternatively, allowlist the worker on the target app.`,
+      );
+      await reporter.missing(`${kind} on target login (import a browser session)`);
+    }
+
     if (options?.projectId) {
       await dumpLoginEvidence(page, options.projectId, watcher, reporter);
     }
@@ -880,6 +902,22 @@ export async function discoverApplication(
       }
     }
 
+    // Credentials were configured but we are not authenticated: crawling now
+    // would map the public marketing site and pass it off as the product.
+    // Fail loudly instead of producing a map that poisons every later step.
+    if (!loggedIn && password) {
+      throw new Error(
+        "Could not authenticate to the target application, so discovery would only map public pages. " +
+          "See the login diagnostics above and the saved login evidence. " +
+          "If the app uses a CAPTCHA, MFA, or SSO, import a browser session on the project's Edit page.",
+      );
+    }
+    if (!loggedIn) {
+      await reporter.log(
+        "No credentials configured — mapping publicly reachable pages only.",
+      );
+    }
+
     await waitForAppReady(page);
 
     // 2. Crawl.
@@ -1047,6 +1085,11 @@ export async function discoverApplication(
     const detail = err instanceof Error ? err.message : String(err);
     await reporter.log(`Discovery via browser failed (${detail}).`);
     if (browser) await browser.close().catch(() => {});
+
+    // Authentication failures already carry their own actionable guidance.
+    if (detail.startsWith("Could not authenticate")) {
+      throw err;
+    }
 
     const hint = discoveryFailureHint(err, detail);
 
