@@ -7,6 +7,8 @@ import {
   saveStoredSession,
 } from "@/lib/playwright/session";
 import { toProjectDTO } from "@/lib/serialize";
+import { requireProject } from "@/lib/auth/guard";
+import { audit, clientIp } from "@/lib/audit";
 import { createLogger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -33,6 +35,9 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  const guard = await requireProject(id);
+  if (!guard.ok) return guard.response;
+  const { auth } = guard.value;
 
   let raw: string;
   try {
@@ -71,18 +76,24 @@ export async function POST(
   }
 
   try {
-    const project = await db.getProject(id);
-    if (!project) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-
-    const saved = await saveStoredSession(id, candidate);
+    const saved = await saveStoredSession(id, candidate, auth.org.id);
     if (!saved) {
       return NextResponse.json(
         { error: "Session state too large to store" },
         { status: 413 },
       );
     }
+
+    await audit({
+      orgId: auth.org.id,
+      userId: auth.user.id,
+      actorEmail: auth.user.email,
+      action: "session.imported",
+      targetType: "project",
+      targetId: id,
+      metadata: { cookies: candidate.cookies.length },
+      ip: clientIp(req),
+    });
 
     const updated = await db.getProject(id);
     log.info(`Imported browser session for project ${id}`);
@@ -99,16 +110,25 @@ export async function POST(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  const guard = await requireProject(id);
+  if (!guard.ok) return guard.response;
+  const { auth } = guard.value;
+
   try {
-    const project = await db.getProject(id);
-    if (!project) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
     await clearStoredSession(id);
+    await audit({
+      orgId: auth.org.id,
+      userId: auth.user.id,
+      actorEmail: auth.user.email,
+      action: "session.cleared",
+      targetType: "project",
+      targetId: id,
+      ip: clientIp(req),
+    });
     log.info(`Cleared browser session for project ${id}`);
     return NextResponse.json({ ok: true });
   } catch (err) {

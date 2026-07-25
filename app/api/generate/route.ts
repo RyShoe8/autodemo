@@ -2,6 +2,7 @@ import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { generateSchema } from "@/lib/validation/schemas";
 import { toJobDTO } from "@/lib/serialize";
+import { requireProject } from "@/lib/auth/guard";
 import { createLogger } from "@/lib/logger";
 import { isActiveJobStatus } from "@/lib/workflow/job-status";
 
@@ -30,10 +31,9 @@ export async function POST(req: NextRequest) {
     parsed.data;
 
   try {
-    const project = await db.getProject(projectId);
-    if (!project) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    }
+    const guard = await requireProject(projectId);
+    if (!guard.ok) return guard.response;
+    const { project } = guard.value;
 
     if (type === "build_workflow" || type === "produce") {
       if (!videoId) {

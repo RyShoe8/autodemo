@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Download, ArrowLeft } from "lucide-react";
 import { db } from "@/lib/db";
+import { requirePageProject } from "@/lib/auth/page-guard";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -16,8 +17,7 @@ export default async function AssetsPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const project = await db.getProject(id);
-  if (!project) notFound();
+  const { project } = await requirePageProject(id);
 
   const applicationMap = project.applicationMap;
   const allVideos = await db.listVideosByProject(id);

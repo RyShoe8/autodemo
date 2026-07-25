@@ -7,7 +7,7 @@ import { SESSION_COOKIE } from "@/lib/auth/constants";
  * server components and route handlers via `isAuthenticated()`.
  */
 
-const PUBLIC_PATHS = ["/login"];
+const PUBLIC_PATHS = ["/login", "/signup"];
 const PUBLIC_API_PREFIXES = ["/api/auth"];
 
 export function middleware(req: NextRequest) {

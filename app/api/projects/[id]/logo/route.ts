@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
+import { requireProject } from "@/lib/auth/guard";
 import { saveBuffer } from "@/lib/storage";
 import { toProjectDTO } from "@/lib/serialize";
 import { createLogger } from "@/lib/logger";
@@ -34,10 +35,9 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const project = await db.getProject(id);
-    if (!project) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+    const guard = await requireProject(id);
+    if (!guard.ok) return guard.response;
+    const { auth, project } = guard.value;
 
     const form = await req.formData();
     const file = form.get("logo");

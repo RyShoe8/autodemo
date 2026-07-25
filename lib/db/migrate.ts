@@ -1,5 +1,11 @@
-import type { DbBackend, ProjectRecord, ProjectVideoRecord } from "@/lib/db/types";
+import type { DbBackend, ProjectRecord } from "@/lib/db/types";
 import type { ProjectStatus, VideoStatus } from "@/types";
+import { createTenantKey } from "@/lib/crypto/tenant-keys";
+import { createLogger } from "@/lib/logger";
+
+const log = createLogger("migrate");
+
+const LEGACY_ORG_SLUG = "default";
 
 function mapLegacyVideoStatus(projectStatus: ProjectStatus): VideoStatus {
   switch (projectStatus) {
@@ -30,9 +36,47 @@ function mapLegacyProjectStatus(projectStatus: ProjectStatus): ProjectStatus {
   return projectStatus;
 }
 
-/** One-time migration from single-video-per-project to ProjectVideo records. */
+/**
+ * Adopt pre-tenancy projects into a default organization.
+ *
+ * Projects created before multi-tenancy have no orgId and would be invisible
+ * (and unlistable) afterwards. They are moved into a "default" org that owns
+ * them from then on. Their secrets stay readable because the legacy ciphertext
+ * format is still accepted on decrypt; they are re-sealed under the org key
+ * the next time they are written.
+ */
+async function adoptOrphanProjects(backend: DbBackend): Promise<string | null> {
+  const orphans = await backend.listProjectsWithoutOrg();
+  if (orphans.length === 0) return null;
+
+  let org = await backend.getOrgBySlug(LEGACY_ORG_SLUG);
+  if (!org) {
+    const { wrappedDek, kekId, dekId } = await createTenantKey();
+    org = await backend.createOrg({
+      name: "Default",
+      slug: LEGACY_ORG_SLUG,
+      wrappedDek,
+      kekId,
+      dekId,
+    });
+    log.info(`Created default organization ${org.id} for legacy data.`);
+  }
+
+  for (const project of orphans) {
+    await backend.updateProject(project.id, { orgId: org.id });
+  }
+  log.info(`Adopted ${orphans.length} pre-tenancy project(s) into "${org.slug}".`);
+  return org.id;
+}
+
+/** One-time migrations: tenancy adoption, then single-video → ProjectVideo. */
 export async function migrateLegacyData(backend: DbBackend): Promise<void> {
-  const projects = await backend.listProjects();
+  await adoptOrphanProjects(backend);
+
+  const projects: ProjectRecord[] = [];
+  for (const org of await backend.listOrgs()) {
+    projects.push(...(await backend.listProjects(org.id)));
+  }
 
   for (const project of projects) {
     const existing = await backend.listVideosByProject(project.id);

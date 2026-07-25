@@ -42,6 +42,18 @@ export const env = {
   authSecret: read("AUTH_SECRET") ?? DEV_DEFAULT_AUTH_SECRET,
   encryptionKey: read("ENCRYPTION_KEY") ?? DEV_DEFAULT_ENCRYPTION_KEY,
 
+  /** Master-key provider for envelope encryption of tenant data keys. */
+  kmsProvider: (read("KMS_PROVIDER") ?? "env") as "env" | "awskms",
+  kmsKeyId: read("KMS_KEY_ID"),
+  masterKeyVersion: read("MASTER_KEY_VERSION") ?? "v1",
+
+  /** Public base URL of the worker's remote-login service (wss/https). */
+  workerPublicUrl: read("WORKER_PUBLIC_URL"),
+  workerServiceToken: read("WORKER_SERVICE_TOKEN"),
+  workerHttpPort: Number(read("PORT") ?? read("WORKER_HTTP_PORT") ?? "8080"),
+  /** Minutes a remote-login browser stays open before being destroyed. */
+  connectSessionTtlMinutes: Number(read("CONNECT_SESSION_TTL_MINUTES") ?? "10"),
+
   elevenLabsApiKey: read("ELEVENLABS_API_KEY"),
 
   blobToken: read("BLOB_READ_WRITE_TOKEN"),
@@ -71,6 +83,8 @@ export const env = {
 
 export const flags = {
   hasMongo: Boolean(env.mongodbUri),
+  hasKms: env.kmsProvider === "awskms" && Boolean(env.kmsKeyId),
+  hasWorkerService: Boolean(env.workerPublicUrl && env.workerServiceToken),
   hasOpenAI: Boolean(env.openaiApiKey),
   hasElevenLabs: Boolean(env.elevenLabsApiKey),
   hasBlob: Boolean(env.blobToken),

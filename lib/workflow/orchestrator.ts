@@ -2,7 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { db } from "@/lib/db";
-import { decrypt } from "@/lib/crypto";
+import { openForOrg } from "@/lib/crypto/tenant-keys";
 import { storage } from "@/lib/storage";
 import { PipelineContext } from "@/lib/workflow/context";
 import {
@@ -136,8 +136,8 @@ export async function runJob(job: JobRecord): Promise<void> {
 async function runDiscover(ctx: PipelineContext, project: ProjectRecord) {
   await ctx.throwIfCancelled();
   await ctx.setStatus("discovering", "discovering", 5);
-  const password = decrypt(project.encryptedPassword);
-  const storageState = loadStoredSession(project);
+  const password = await openForOrg(project.orgId, project.encryptedPassword);
+  const storageState = await loadStoredSession(project);
   if (storageState) {
     await ctx.log("Found stored browser session — will try to reuse it.");
   }
@@ -147,6 +147,7 @@ async function runDiscover(ctx: PipelineContext, project: ProjectRecord) {
 
   const applicationMap = await discoverApplication({
     projectId: project.id,
+    orgId: project.orgId,
     url: project.url,
     email: project.loginEmail,
     password,
@@ -184,11 +185,12 @@ async function runRecapture(ctx: PipelineContext, project: ProjectRecord) {
 
   await ctx.throwIfCancelled();
   await ctx.setStatus("discovering", "discovering", 5);
-  const password = decrypt(project.encryptedPassword);
-  const storageState = loadStoredSession(project);
+  const password = await openForOrg(project.orgId, project.encryptedPassword);
+  const storageState = await loadStoredSession(project);
 
   const applicationMap = await recaptureScreenshots({
     projectId: project.id,
+    orgId: project.orgId,
     url: project.url,
     email: project.loginEmail,
     password,
@@ -290,16 +292,17 @@ async function runProduce(
 
   await ctx.throwIfCancelled();
   await ctx.setStatus("recording", "recording", 10);
-  const password = decrypt(project.encryptedPassword);
+  const password = await openForOrg(project.orgId, project.encryptedPassword);
   const recording = await executeWorkflow({
     projectId: project.id,
+    orgId: project.orgId,
     url: project.url,
     email: project.loginEmail,
     password,
     workflow: enrichedWorkflow,
     applicationMap: project.applicationMap,
     reporter: ctx,
-    storageState: loadStoredSession(project),
+    storageState: await loadStoredSession(project),
   });
   await ctx.log(`Captured ${recording.scenes.length} scenes.`);
   await ctx.setProgress(30);

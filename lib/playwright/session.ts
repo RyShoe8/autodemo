@@ -1,6 +1,6 @@
 import type { BrowserContext } from "playwright";
 import { db } from "@/lib/db";
-import { decrypt, encrypt } from "@/lib/crypto";
+import { openForOrg, sealForOrg } from "@/lib/crypto/tenant-keys";
 import type { ProjectRecord } from "@/lib/db/types";
 import type { Reporter } from "@/lib/workflow/context";
 
@@ -25,12 +25,15 @@ export function isStorageStateShape(value: unknown): value is StorageState {
   return Array.isArray(v.cookies) && Array.isArray(v.origins);
 }
 
-/** Decrypt and parse the project's stored session, or null when absent/corrupt. */
-export function loadStoredSession(
-  project: Pick<ProjectRecord, "encryptedStorageState">,
-): StorageState | null {
+/**
+ * Decrypt and parse the project's stored session, or null when absent,
+ * corrupt, or sealed under a tenant key that has been revoked.
+ */
+export async function loadStoredSession(
+  project: Pick<ProjectRecord, "encryptedStorageState" | "orgId">,
+): Promise<StorageState | null> {
   if (!project.encryptedStorageState) return null;
-  const json = decrypt(project.encryptedStorageState);
+  const json = await openForOrg(project.orgId, project.encryptedStorageState);
   if (!json) return null;
   try {
     const parsed = JSON.parse(json) as unknown;
@@ -40,10 +43,11 @@ export function loadStoredSession(
   }
 }
 
-/** Encrypt and persist a storage state on the project. */
+/** Encrypt (under the owning org's key) and persist a storage state. */
 export async function saveStoredSession(
   projectId: string,
   state: StorageState,
+  orgId: string,
   reporter?: Reporter,
 ): Promise<boolean> {
   const json = JSON.stringify(state);
@@ -54,7 +58,7 @@ export async function saveStoredSession(
     return false;
   }
   await db.updateProject(projectId, {
-    encryptedStorageState: encrypt(json),
+    encryptedStorageState: await sealForOrg(orgId, json),
     storageStateSavedAt: new Date(),
   });
   await reporter?.log("Saved authenticated browser session for reuse.");
@@ -64,13 +68,14 @@ export async function saveStoredSession(
 /** Capture the context's current state and persist it (non-fatal on error). */
 export async function persistContextSession(
   projectId: string,
+  orgId: string,
   context: BrowserContext,
   reporter?: Reporter,
 ): Promise<void> {
   try {
     const state = await context.storageState();
     if (state.cookies.length === 0 && state.origins.length === 0) return;
-    await saveStoredSession(projectId, state, reporter);
+    await saveStoredSession(projectId, state, orgId, reporter);
   } catch (err) {
     await reporter?.log(
       `Could not persist session state: ${err instanceof Error ? err.message : String(err)}`,

@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
+import { requireVideo } from "@/lib/auth/guard";
 import { toProjectVideoDTO } from "@/lib/serialize";
 import { updateProjectVideoSchema } from "@/lib/validation/schemas";
 import { createLogger } from "@/lib/logger";
@@ -27,10 +28,9 @@ export async function GET(
 ) {
   const { id, videoId } = await params;
   try {
-    const video = await db.getVideo(videoId);
-    if (!video || video.projectId !== id) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+    const guard = await requireVideo(videoId, id);
+    if (!guard.ok) return guard.response;
+    const { video } = guard.value;
     return NextResponse.json({ video: toProjectVideoDTO(video) });
   } catch (err) {
     log.error("Failed to load video", err);
@@ -60,10 +60,8 @@ export async function PATCH(
   }
 
   try {
-    const existing = await db.getVideo(videoId);
-    if (!existing || existing.projectId !== id) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+    const guard = await requireVideo(videoId, id);
+    if (!guard.ok) return guard.response;
 
     const video = await db.updateVideo(videoId, parsed.data);
     if (!video) {
@@ -82,10 +80,8 @@ export async function DELETE(
 ) {
   const { id, videoId } = await params;
   try {
-    const existing = await db.getVideo(videoId);
-    if (!existing || existing.projectId !== id) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+    const guard = await requireVideo(videoId, id);
+    if (!guard.ok) return guard.response;
 
     const latestJob = await db.getLatestJobByVideo(videoId);
     if (latestJob && ACTIVE_JOB_STATUSES.includes(latestJob.status)) {

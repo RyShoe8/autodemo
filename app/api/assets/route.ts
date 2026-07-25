@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { toAssetDTO } from "@/lib/serialize";
+import { requireProject, requireVideo } from "@/lib/auth/guard";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -14,8 +15,16 @@ export async function GET(req: NextRequest) {
       { status: 400 },
     );
   }
-  const assets = videoId
-    ? await db.listAssetsByVideo(videoId)
-    : await db.listAssetsByProject(projectId!);
+
+  if (videoId) {
+    const guard = await requireVideo(videoId);
+    if (!guard.ok) return guard.response;
+    const assets = await db.listAssetsByVideo(videoId);
+    return NextResponse.json({ assets: assets.map(toAssetDTO) });
+  }
+
+  const guard = await requireProject(projectId!);
+  if (!guard.ok) return guard.response;
+  const assets = await db.listAssetsByProject(projectId!);
   return NextResponse.json({ assets: assets.map(toAssetDTO) });
 }

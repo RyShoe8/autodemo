@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { db } from "@/lib/db";
+import { requireProject } from "@/lib/auth/guard";
 import { readAsset } from "@/lib/storage";
 
 // @ts-ignore
@@ -13,10 +14,11 @@ export async function GET(
   const { searchParams } = new URL(request.url);
   const pageUrlFilter = searchParams.get("pageUrl");
 
-  const project = await db.getProject(id);
-  if (!project) {
-    return NextResponse.json({ error: "Project not found" }, { status: 404 });
-  }
+  const guard = await requireProject(id);
+
+  if (!guard.ok) return guard.response;
+
+  const { project } = guard.value;
 
   const applicationMap = project.applicationMap;
   if (!applicationMap) {

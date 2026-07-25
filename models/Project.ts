@@ -2,6 +2,7 @@ import mongoose, { Schema, type InferSchemaType, type Model } from "mongoose";
 
 const ProjectSchema = new Schema(
   {
+    orgId: { type: Schema.Types.ObjectId, ref: "Org", required: true, index: true },
     name: { type: String, required: true },
     url: { type: String, required: true },
     loginEmail: { type: String, default: "" },

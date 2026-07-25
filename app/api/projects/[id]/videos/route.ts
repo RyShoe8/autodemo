@@ -1,5 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
+import { requireProject } from "@/lib/auth/guard";
 import { toProjectVideoDTO, toJobDTO } from "@/lib/serialize";
 import {
   createProjectVideoSchema,
@@ -28,10 +29,9 @@ export async function GET(
 ) {
   const { id } = await params;
   try {
-    const project = await db.getProject(id);
-    if (!project) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
+    const guard = await requireProject(id);
+    if (!guard.ok) return guard.response;
+    const { auth, project } = guard.value;
     const videos = await db.listVideosByProject(id);
     return NextResponse.json({
       videos: videos.map(toProjectVideoDTO),
@@ -64,10 +64,10 @@ export async function POST(
   }
 
   try {
-    const project = await db.getProject(projectId);
-    if (!project) {
-      return NextResponse.json({ error: "Project not found" }, { status: 404 });
-    }
+    const guard = await requireProject(projectId);
+    if (!guard.ok) return guard.response;
+    const { project } = guard.value;
+
     if (!project.applicationMap) {
       return NextResponse.json(
         { error: "Run discovery on the project before creating a video" },

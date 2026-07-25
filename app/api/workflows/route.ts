@@ -3,6 +3,7 @@ import { z } from "zod";
 import { db } from "@/lib/db";
 import { workflowSchema } from "@/lib/validation/schemas";
 import { toProjectVideoDTO, toJobDTO } from "@/lib/serialize";
+import { requireVideo } from "@/lib/auth/guard";
 import { createLogger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -35,6 +36,9 @@ export async function PUT(req: NextRequest) {
       { status: 422 },
     );
   }
+  const guard = await requireVideo(parsed.data.videoId);
+  if (!guard.ok) return guard.response;
+
   const video = await db.updateVideo(parsed.data.videoId, {
     workflow: parsed.data.workflow,
   });
@@ -60,10 +64,9 @@ export async function POST(req: NextRequest) {
   }
 
   const { videoId, action, workflow } = parsed.data;
-  const video = await db.getVideo(videoId);
-  if (!video) {
-    return NextResponse.json({ error: "Video not found" }, { status: 404 });
-  }
+  const guard = await requireVideo(videoId);
+  if (!guard.ok) return guard.response;
+  const { video } = guard.value;
 
   if (workflow) {
     await db.updateVideo(videoId, { workflow });

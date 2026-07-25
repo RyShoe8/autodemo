@@ -44,6 +44,7 @@ import type {
 
 export interface RecordOptions {
   projectId: string;
+  orgId: string;
   url: string;
   email: string;
   password: string;
@@ -394,7 +395,7 @@ async function finalizeScreenRecording(
 export async function executeWorkflow(
   opts: RecordOptions,
 ): Promise<RecordingResult> {
-  const { reporter, projectId, url, email, password, applicationMap } = opts;
+  const { reporter, projectId, orgId, url, email, password, applicationMap } = opts;
   const enabledSteps = opts.workflow
     .filter((s) => s.enabled)
     .sort((a, b) => a.order - b.order);
@@ -438,7 +439,7 @@ export async function executeWorkflow(
         projectId,
       });
       if (loggedIn) {
-        await persistContextSession(projectId, loginContext, reporter);
+        await persistContextSession(projectId, orgId, loginContext, reporter);
       }
     }
     if (!loggedIn) {

@@ -1,42 +1,26 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
-import { encrypt } from "@/lib/crypto";
+import { sealForOrg } from "@/lib/crypto/tenant-keys";
 import { toProjectDTO } from "@/lib/serialize";
 import { updateProjectSchema } from "@/lib/validation/schemas";
+import { requireProject } from "@/lib/auth/guard";
+import { audit, clientIp } from "@/lib/audit";
 import { createLogger } from "@/lib/logger";
-import type { JobStatus } from "@/types";
+import { isActiveJobStatus } from "@/lib/workflow/job-status";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const log = createLogger("api:projects:id");
 
-const ACTIVE_JOB_STATUSES: JobStatus[] = [
-  "queued",
-  "discovering",
-  "building_workflow",
-  "recording",
-  "generating_script",
-  "generating_audio",
-  "rendering",
-  "exporting",
-];
-
 export async function GET(
   _req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
-  try {
-    const project = await db.getProject(id);
-    if (!project) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-    return NextResponse.json({ project: toProjectDTO(project) });
-  } catch (err) {
-    log.error("Failed to load project", err);
-    return NextResponse.json({ error: "Failed to load project" }, { status: 500 });
-  }
+  const guard = await requireProject(id);
+  if (!guard.ok) return guard.response;
+  return NextResponse.json({ project: toProjectDTO(guard.value.project) });
 }
 
 export async function PATCH(
@@ -44,6 +28,9 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  const guard = await requireProject(id);
+  if (!guard.ok) return guard.response;
+  const { auth, project: existing } = guard.value;
 
   let body: unknown;
   try {
@@ -61,13 +48,8 @@ export async function PATCH(
   }
 
   try {
-    const existing = await db.getProject(id);
-    if (!existing) {
-      return NextResponse.json({ error: "Not found" }, { status: 404 });
-    }
-
     const latestJob = await db.getLatestJobByProject(id);
-    if (latestJob && ACTIVE_JOB_STATUSES.includes(latestJob.status)) {
+    if (latestJob && isActiveJobStatus(latestJob.status)) {
       return NextResponse.json(
         { error: "Cannot edit project while a job is in progress" },
         { status: 409 },
@@ -92,7 +74,10 @@ export async function PATCH(
     }
 
     if (data.loginPassword && data.loginPassword.length > 0) {
-      patch.encryptedPassword = encrypt(data.loginPassword);
+      patch.encryptedPassword = await sealForOrg(
+        auth.org.id,
+        data.loginPassword,
+      );
     }
 
     const credentialsChanged =
@@ -110,10 +95,7 @@ export async function PATCH(
         screenshots: [],
         uiText: [],
       };
-      if (
-        existing.status === "ready" ||
-        existing.status === "failed"
-      ) {
+      if (existing.status === "ready" || existing.status === "failed") {
         patch.status = "draft";
       }
     }
@@ -122,6 +104,16 @@ export async function PATCH(
     if (!project) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }
+
+    await audit({
+      orgId: auth.org.id,
+      userId: auth.user.id,
+      actorEmail: auth.user.email,
+      action: credentialsChanged ? "credentials.updated" : "project.updated",
+      targetType: "project",
+      targetId: id,
+      ip: clientIp(req),
+    });
 
     return NextResponse.json({ project: toProjectDTO(project) });
   } catch (err) {
@@ -134,13 +126,28 @@ export async function PATCH(
 }
 
 export async function DELETE(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) {
   const { id } = await params;
+  const guard = await requireProject(id);
+  if (!guard.ok) return guard.response;
+  const { auth } = guard.value;
+
   try {
     const ok = await db.deleteProject(id);
     if (!ok) return NextResponse.json({ error: "Not found" }, { status: 404 });
+
+    await audit({
+      orgId: auth.org.id,
+      userId: auth.user.id,
+      actorEmail: auth.user.email,
+      action: "project.deleted",
+      targetType: "project",
+      targetId: id,
+      ip: clientIp(req),
+    });
+
     return NextResponse.json({ ok: true });
   } catch (err) {
     log.error("Failed to delete project", err);

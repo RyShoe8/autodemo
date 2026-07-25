@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { toJobDTO } from "@/lib/serialize";
+import { requireProject, requireVideo } from "@/lib/auth/guard";
 import { createLogger } from "@/lib/logger";
 
 export const runtime = "nodejs";
@@ -22,6 +23,9 @@ export async function GET(req: NextRequest) {
 
   try {
     if (videoId) {
+      const videoGuard = await requireVideo(videoId);
+      if (!videoGuard.ok) return videoGuard.response;
+
       if (all === "true") {
         const jobs = await db.listJobsByVideo(videoId);
         return NextResponse.json({ jobs: jobs.map(toJobDTO) });
@@ -29,6 +33,9 @@ export async function GET(req: NextRequest) {
       const job = await db.getLatestJobByVideo(videoId);
       return NextResponse.json({ job: job ? toJobDTO(job) : null });
     }
+
+    const projectGuard = await requireProject(projectId!);
+    if (!projectGuard.ok) return projectGuard.response;
 
     if (all === "true") {
       const jobs = await db.listJobsByProject(projectId!);

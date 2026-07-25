@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { Pencil, FolderOpen, Map } from "lucide-react";
 import { db } from "@/lib/db";
+import { requirePageProject } from "@/lib/auth/page-guard";
 import { toProjectDTO, toProjectVideoDTO } from "@/lib/serialize";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -19,8 +20,7 @@ export default async function ProjectDetailPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const record = await db.getProject(id);
-  if (!record) notFound();
+  const { project: record } = await requirePageProject(id);
   const project = toProjectDTO(record);
   const videos = (await db.listVideosByProject(id)).map(toProjectVideoDTO);
 

@@ -3,17 +3,33 @@ import { ProjectModel } from "@/models/Project";
 import { ProjectVideoModel } from "@/models/ProjectVideo";
 import { JobModel } from "@/models/Job";
 import { VideoAssetModel } from "@/models/VideoAsset";
+import { OrgModel } from "@/models/Org";
+import { UserModel } from "@/models/User";
+import { MembershipModel } from "@/models/Membership";
+import { AuditEventModel } from "@/models/AuditEvent";
+import { ConnectSessionModel } from "@/models/ConnectSession";
 import type {
   AssetRecord,
+  AuditEventRecord,
+  ConnectSessionRecord,
   CreateAssetInput,
+  CreateAuditEventInput,
+  CreateConnectSessionInput,
   CreateJobInput,
+  CreateMembershipInput,
+  CreateOrgInput,
   CreateProjectInput,
   CreateProjectVideoInput,
+  CreateUserInput,
   DbBackend,
   JobRecord,
+  MembershipRecord,
+  OrgRecord,
   ProjectRecord,
   ProjectVideoRecord,
+  UserRecord,
 } from "@/lib/db/types";
+import type { AuditAction, ConnectSessionStatus, OrgRole } from "@/types/tenancy";
 import { firstStatusForType } from "@/lib/db/types";
 import { ACTIVE_JOB_STATUSES } from "@/lib/workflow/job-status";
 import type {
@@ -27,9 +43,73 @@ import type {
 
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
+function mapOrg(doc: any): OrgRecord {
+  return {
+    id: String(doc._id),
+    name: doc.name,
+    slug: doc.slug,
+    wrappedDek: doc.wrappedDek ?? "",
+    kekId: doc.kekId ?? "",
+    dekId: doc.dekId ?? "",
+    createdAt: doc.createdAt ?? new Date(),
+  };
+}
+
+function mapUser(doc: any): UserRecord {
+  return {
+    id: String(doc._id),
+    email: doc.email,
+    passwordHash: doc.passwordHash,
+    name: doc.name ?? undefined,
+    createdAt: doc.createdAt ?? new Date(),
+  };
+}
+
+function mapMembership(doc: any): MembershipRecord {
+  return {
+    id: String(doc._id),
+    orgId: String(doc.orgId),
+    userId: String(doc.userId),
+    role: doc.role as OrgRole,
+    createdAt: doc.createdAt ?? new Date(),
+  };
+}
+
+function mapAuditEvent(doc: any): AuditEventRecord {
+  return {
+    id: String(doc._id),
+    orgId: String(doc.orgId),
+    userId: doc.userId ? String(doc.userId) : undefined,
+    actorEmail: doc.actorEmail ?? undefined,
+    action: doc.action as AuditAction,
+    targetType: doc.targetType ?? undefined,
+    targetId: doc.targetId ?? undefined,
+    metadata: doc.metadata ?? undefined,
+    ip: doc.ip ?? undefined,
+    createdAt: doc.createdAt ?? new Date(),
+  };
+}
+
+function mapConnectSession(doc: any): ConnectSessionRecord {
+  return {
+    id: String(doc._id),
+    orgId: String(doc.orgId),
+    projectId: String(doc.projectId),
+    userId: doc.userId ? String(doc.userId) : undefined,
+    tokenHash: doc.tokenHash,
+    status: doc.status as ConnectSessionStatus,
+    startUrl: doc.startUrl,
+    error: doc.error ?? undefined,
+    expiresAt: doc.expiresAt,
+    capturedAt: doc.capturedAt ?? undefined,
+    createdAt: doc.createdAt ?? new Date(),
+  };
+}
+
 function mapProject(doc: any): ProjectRecord {
   return {
     id: String(doc._id),
+    orgId: doc.orgId ? String(doc.orgId) : "",
     name: doc.name,
     url: doc.url,
     loginEmail: doc.loginEmail ?? "",
@@ -103,6 +183,201 @@ function mapAsset(doc: any): AssetRecord {
 }
 
 export class MongooseBackend implements DbBackend {
+  /* ----------------------------- Organizations ---------------------------- */
+
+  async createOrg(input: CreateOrgInput): Promise<OrgRecord> {
+    await connectMongo();
+    const doc = await OrgModel.create(input);
+    return mapOrg(doc.toObject());
+  }
+
+  async getOrg(id: string): Promise<OrgRecord | null> {
+    await connectMongo();
+    const doc = await OrgModel.findById(id).lean();
+    return doc ? mapOrg(doc) : null;
+  }
+
+  async getOrgBySlug(slug: string): Promise<OrgRecord | null> {
+    await connectMongo();
+    const doc = await OrgModel.findOne({ slug }).lean();
+    return doc ? mapOrg(doc) : null;
+  }
+
+  async listOrgs(): Promise<OrgRecord[]> {
+    await connectMongo();
+    const docs = await OrgModel.find().sort({ createdAt: 1 }).lean();
+    return docs.map(mapOrg);
+  }
+
+  async updateOrg(
+    id: string,
+    patch: Partial<Omit<OrgRecord, "id" | "createdAt">>,
+  ): Promise<OrgRecord | null> {
+    await connectMongo();
+    const doc = await OrgModel.findByIdAndUpdate(id, patch, {
+      returnDocument: "after",
+    }).lean();
+    return doc ? mapOrg(doc) : null;
+  }
+
+  /* --------------------------------- Users -------------------------------- */
+
+  async createUser(input: CreateUserInput): Promise<UserRecord> {
+    await connectMongo();
+    const doc = await UserModel.create({
+      ...input,
+      email: input.email.toLowerCase(),
+    });
+    return mapUser(doc.toObject());
+  }
+
+  async getUser(id: string): Promise<UserRecord | null> {
+    await connectMongo();
+    const doc = await UserModel.findById(id).lean();
+    return doc ? mapUser(doc) : null;
+  }
+
+  async getUserByEmail(email: string): Promise<UserRecord | null> {
+    await connectMongo();
+    const doc = await UserModel.findOne({ email: email.toLowerCase() }).lean();
+    return doc ? mapUser(doc) : null;
+  }
+
+  async countUsers(): Promise<number> {
+    await connectMongo();
+    return UserModel.countDocuments();
+  }
+
+  /* ------------------------------ Memberships ----------------------------- */
+
+  async createMembership(
+    input: CreateMembershipInput,
+  ): Promise<MembershipRecord> {
+    await connectMongo();
+    const doc = await MembershipModel.create(input);
+    return mapMembership(doc.toObject());
+  }
+
+  async getMembership(
+    orgId: string,
+    userId: string,
+  ): Promise<MembershipRecord | null> {
+    await connectMongo();
+    const doc = await MembershipModel.findOne({ orgId, userId }).lean();
+    return doc ? mapMembership(doc) : null;
+  }
+
+  async listMembershipsByUser(userId: string): Promise<MembershipRecord[]> {
+    await connectMongo();
+    const docs = await MembershipModel.find({ userId })
+      .sort({ createdAt: 1 })
+      .lean();
+    return docs.map(mapMembership);
+  }
+
+  async listMembershipsByOrg(orgId: string): Promise<MembershipRecord[]> {
+    await connectMongo();
+    const docs = await MembershipModel.find({ orgId })
+      .sort({ createdAt: 1 })
+      .lean();
+    return docs.map(mapMembership);
+  }
+
+  async updateMembership(
+    id: string,
+    patch: Partial<Pick<MembershipRecord, "role">>,
+  ): Promise<MembershipRecord | null> {
+    await connectMongo();
+    const doc = await MembershipModel.findByIdAndUpdate(id, patch, {
+      returnDocument: "after",
+    }).lean();
+    return doc ? mapMembership(doc) : null;
+  }
+
+  async deleteMembership(id: string): Promise<boolean> {
+    await connectMongo();
+    const res = await MembershipModel.findByIdAndDelete(id);
+    return Boolean(res);
+  }
+
+  /* ------------------------------- Audit log ------------------------------ */
+
+  async createAuditEvent(
+    input: CreateAuditEventInput,
+  ): Promise<AuditEventRecord> {
+    await connectMongo();
+    const doc = await AuditEventModel.create(input);
+    return mapAuditEvent(doc.toObject());
+  }
+
+  async listAuditEvents(
+    orgId: string,
+    limit = 200,
+  ): Promise<AuditEventRecord[]> {
+    await connectMongo();
+    const docs = await AuditEventModel.find({ orgId })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .lean();
+    return docs.map(mapAuditEvent);
+  }
+
+  /* --------------------------- Connect sessions --------------------------- */
+
+  async createConnectSession(
+    input: CreateConnectSessionInput,
+  ): Promise<ConnectSessionRecord> {
+    await connectMongo();
+    const doc = await ConnectSessionModel.create({ ...input, status: "pending" });
+    return mapConnectSession(doc.toObject());
+  }
+
+  async getConnectSession(id: string): Promise<ConnectSessionRecord | null> {
+    await connectMongo();
+    const doc = await ConnectSessionModel.findById(id).lean();
+    return doc ? mapConnectSession(doc) : null;
+  }
+
+  async getConnectSessionByTokenHash(
+    tokenHash: string,
+  ): Promise<ConnectSessionRecord | null> {
+    await connectMongo();
+    const doc = await ConnectSessionModel.findOne({ tokenHash }).lean();
+    return doc ? mapConnectSession(doc) : null;
+  }
+
+  async updateConnectSession(
+    id: string,
+    patch: Partial<Omit<ConnectSessionRecord, "id" | "orgId" | "createdAt">>,
+  ): Promise<ConnectSessionRecord | null> {
+    await connectMongo();
+    const doc = await ConnectSessionModel.findByIdAndUpdate(id, patch, {
+      returnDocument: "after",
+    }).lean();
+    return doc ? mapConnectSession(doc) : null;
+  }
+
+  async claimPendingConnectSession(): Promise<ConnectSessionRecord | null> {
+    await connectMongo();
+    const doc = await ConnectSessionModel.findOneAndUpdate(
+      { status: "pending", expiresAt: { $gt: new Date() } },
+      { $set: { status: "live" } },
+      { returnDocument: "after", sort: { createdAt: 1 } },
+    ).lean();
+    return doc ? mapConnectSession(doc) : null;
+  }
+
+  async expireStaleConnectSessions(): Promise<number> {
+    await connectMongo();
+    const res = await ConnectSessionModel.updateMany(
+      { status: { $in: ["pending", "live"] }, expiresAt: { $lte: new Date() } },
+      { $set: { status: "expired" } },
+    );
+    return res.modifiedCount ?? 0;
+  }
+
+  /* -------------------------------- Projects ------------------------------ */
+
   async createProject(input: CreateProjectInput): Promise<ProjectRecord> {
     await connectMongo();
     const doc = await ProjectModel.create({
@@ -113,9 +388,17 @@ export class MongooseBackend implements DbBackend {
     return mapProject(doc.toObject());
   }
 
-  async listProjects(): Promise<ProjectRecord[]> {
+  async listProjects(orgId: string): Promise<ProjectRecord[]> {
     await connectMongo();
-    const docs = await ProjectModel.find().sort({ createdAt: -1 }).lean();
+    const docs = await ProjectModel.find({ orgId }).sort({ createdAt: -1 }).lean();
+    return docs.map(mapProject);
+  }
+
+  async listProjectsWithoutOrg(): Promise<ProjectRecord[]> {
+    await connectMongo();
+    const docs = await ProjectModel.find({
+      $or: [{ orgId: { $exists: false } }, { orgId: null }],
+    }).lean();
     return docs.map(mapProject);
   }
 

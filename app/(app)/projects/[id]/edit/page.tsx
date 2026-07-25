@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { db } from "@/lib/db";
+import { requirePageProject } from "@/lib/auth/page-guard";
 import { toProjectDTO } from "@/lib/serialize";
 import { PageHeader } from "@/components/layout/page-header";
 import { EditProjectForm } from "@/components/forms/edit-project-form";
@@ -13,8 +14,7 @@ export default async function EditProjectPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const record = await db.getProject(id);
-  if (!record) notFound();
+  const { project: record } = await requirePageProject(id);
   const project = toProjectDTO(record);
 
   return (

@@ -39,6 +39,8 @@ import type { Reporter as PipelineReporter } from "@/lib/workflow/context";
 
 export interface DiscoverOptions {
   projectId: string;
+  /** Owning organization — scopes the encryption key used for saved sessions. */
+  orgId: string;
   url: string;
   email: string;
   password: string;
@@ -850,7 +852,7 @@ async function explorePageOverlays(args: {
 export async function discoverApplication(
   opts: DiscoverOptions,
 ): Promise<ApplicationMap> {
-  const { reporter, projectId, url, email, password } = opts;
+  const { reporter, projectId, orgId, url, email, password } = opts;
   const maxPages = Math.max(3, Math.min(100, opts.maxPages ?? 30));
   const origin = new URL(url).origin;
 
@@ -898,7 +900,7 @@ export async function discoverApplication(
         }
       }
       if (loggedIn) {
-        await persistContextSession(projectId, context, reporter);
+        await persistContextSession(projectId, orgId, context, reporter);
       }
     }
 
@@ -1099,6 +1101,7 @@ export async function discoverApplication(
 
 export interface RecaptureOptions {
   projectId: string;
+  orgId: string;
   url: string;
   email: string;
   password: string;
@@ -1114,7 +1117,7 @@ export interface RecaptureOptions {
 export async function recaptureScreenshots(
   opts: RecaptureOptions,
 ): Promise<ApplicationMap> {
-  const { reporter, projectId, url, email, password, applicationMap } = opts;
+  const { reporter, projectId, orgId, url, email, password, applicationMap } = opts;
   const origin = new URL(url).origin;
 
   let browser: Browser | null = null;
@@ -1140,7 +1143,7 @@ export async function recaptureScreenshots(
     }
     if (!loggedIn) {
       loggedIn = await login(page, email, password, reporter, { projectId });
-      if (loggedIn) await persistContextSession(projectId, context, reporter);
+      if (loggedIn) await persistContextSession(projectId, orgId, context, reporter);
     }
 
     const pages = applicationMap.pages.map((p) => ({ ...p }));

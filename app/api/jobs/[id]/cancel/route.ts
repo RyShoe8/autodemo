@@ -1,6 +1,7 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { db } from "@/lib/db";
 import { toJobDTO } from "@/lib/serialize";
+import { requireJob } from "@/lib/auth/guard";
 import { createLogger } from "@/lib/logger";
 import {
   CANCELLED_BY_USER,
@@ -20,10 +21,9 @@ export async function POST(
   const { id } = await params;
 
   try {
-    const job = await db.getJob(id);
-    if (!job) {
-      return NextResponse.json({ error: "Job not found" }, { status: 404 });
-    }
+    const guard = await requireJob(id);
+    if (!guard.ok) return guard.response;
+    const { job } = guard.value;
 
     if (isTerminalJobStatus(job.status)) {
       return NextResponse.json({ job: toJobDTO(job) });

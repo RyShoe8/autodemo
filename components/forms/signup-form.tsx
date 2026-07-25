@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -12,13 +12,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
-import { loginSchema } from "@/lib/validation/schemas";
+import { signupSchema } from "@/lib/validation/schemas";
 
-type FormValues = z.infer<typeof loginSchema>;
+type FormValues = z.infer<typeof signupSchema>;
 
-export function LoginForm() {
+export function SignupForm() {
   const router = useRouter();
-  const searchParams = useSearchParams();
   const [submitting, setSubmitting] = useState(false);
 
   const {
@@ -26,26 +25,25 @@ export function LoginForm() {
     handleSubmit,
     formState: { errors },
   } = useForm<FormValues>({
-    resolver: zodResolver(loginSchema),
-    defaultValues: { email: "", password: "" },
+    resolver: zodResolver(signupSchema),
+    defaultValues: { email: "", password: "", name: "", organizationName: "" },
   });
 
   async function onSubmit(values: FormValues) {
     setSubmitting(true);
     try {
-      const res = await fetch("/api/auth", {
+      const res = await fetch("/api/auth/signup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(values),
       });
       if (!res.ok) {
         const data = await res.json().catch(() => ({}));
-        toast.error(data.error ?? "Login failed");
+        toast.error(data.error ?? "Could not create the account");
         return;
       }
-      toast.success("Welcome back");
-      const from = searchParams.get("from") || "/dashboard";
-      router.replace(from);
+      toast.success("Workspace created");
+      router.replace("/dashboard");
       router.refresh();
     } catch {
       toast.error("Network error — please try again");
@@ -59,12 +57,32 @@ export function LoginForm() {
       <CardContent className="pt-6">
         <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
           <div className="space-y-2">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="organizationName">Organization</Label>
+            <Input
+              id="organizationName"
+              autoFocus
+              placeholder="Acme Inc"
+              {...register("organizationName")}
+            />
+            {errors.organizationName && (
+              <p className="text-xs text-destructive">
+                {errors.organizationName.message}
+              </p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="name">Your name</Label>
+            <Input id="name" placeholder="Alex Kim" {...register("name")} />
+            {errors.name && (
+              <p className="text-xs text-destructive">{errors.name.message}</p>
+            )}
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="email">Work email</Label>
             <Input
               id="email"
               type="email"
               autoComplete="email"
-              autoFocus
               placeholder="you@company.com"
               {...register("email")}
             />
@@ -77,8 +95,8 @@ export function LoginForm() {
             <Input
               id="password"
               type="password"
-              autoComplete="current-password"
-              placeholder="••••••••"
+              autoComplete="new-password"
+              placeholder="At least 12 characters"
               {...register("password")}
             />
             {errors.password && (
@@ -89,12 +107,12 @@ export function LoginForm() {
           </div>
           <Button type="submit" className="w-full" disabled={submitting}>
             {submitting && <Loader2 className="h-4 w-4 animate-spin" />}
-            Sign in
+            Create workspace
           </Button>
           <p className="text-center text-sm text-muted-foreground">
-            No account?{" "}
-            <Link href="/signup" className="underline underline-offset-4">
-              Create one
+            Already have an account?{" "}
+            <Link href="/login" className="underline underline-offset-4">
+              Sign in
             </Link>
           </p>
         </form>

@@ -2,6 +2,7 @@ import { notFound } from "next/navigation";
 import Link from "next/link";
 import { ArrowLeft } from "lucide-react";
 import { db } from "@/lib/db";
+import { requirePageProject } from "@/lib/auth/page-guard";
 import { toProjectDTO, toProjectVideoDTO } from "@/lib/serialize";
 import { PageHeader } from "@/components/layout/page-header";
 import { Button } from "@/components/ui/button";
@@ -16,9 +17,9 @@ export default async function VideoWorkflowPage({
   params: Promise<{ id: string; videoId: string }>;
 }) {
   const { id, videoId } = await params;
-  const projectRecord = await db.getProject(id);
+  const { project: projectRecord } = await requirePageProject(id);
   const videoRecord = await db.getVideo(videoId);
-  if (!projectRecord || !videoRecord || videoRecord.projectId !== id) notFound();
+  if (!videoRecord || videoRecord.projectId !== id) notFound();
 
   const project = toProjectDTO(projectRecord);
   const video = toProjectVideoDTO(videoRecord);

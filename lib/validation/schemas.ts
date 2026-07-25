@@ -136,7 +136,39 @@ export const updateWorkflowSchema = z.object({
 });
 
 export const loginSchema = z.object({
+  email: z.string().email("Enter a valid email"),
   password: z.string().min(1, "Password is required"),
+});
+
+export const signupSchema = z.object({
+  email: z.string().email("Enter a valid email"),
+  password: z
+    .string()
+    .min(12, "Use at least 12 characters")
+    .max(200),
+  name: z.string().max(120).optional(),
+  organizationName: z
+    .string()
+    .min(1, "Organization name is required")
+    .max(120),
+});
+
+export const inviteMemberSchema = z.object({
+  email: z.string().email("Enter a valid email"),
+  password: z
+    .string()
+    .min(12, "Use at least 12 characters")
+    .max(200),
+  name: z.string().max(120).optional(),
+  role: z.enum(["owner", "admin", "member"]).default("member"),
+});
+
+export const updateMemberSchema = z.object({
+  role: z.enum(["owner", "admin", "member"]),
+});
+
+export const startConnectSchema = z.object({
+  projectId: z.string().min(1),
 });
 
 export const generateSchema = z.object({
