@@ -28,6 +28,46 @@ produce job:   queued -> recording -> generating_script -> generating_audio -> r
 (any failure -> failed)
 ```
 
+### Tenancy and security
+
+Accounts are email + password (scrypt); signing up creates an **organization**
+and an owner membership. Every project, video, job, and asset belongs to an
+org, and all API routes and pages resolve access through guards in
+[`lib/auth/guard.ts`](lib/auth/guard.ts) — cross-tenant requests return 404 so
+the API never confirms another tenant's resources exist.
+
+Tenant secrets (target-app passwords, saved browser sessions) use **envelope
+encryption**: each org has its own random data key (DEK), sealed under a master
+key (KEK) that is never stored in the database. One tenant's key cannot decrypt
+another's data, and revoking an org's key cryptographically erases its secrets.
+Set `KMS_PROVIDER=awskms` + `KMS_KEY_ID` to keep the KEK in AWS KMS (install
+`@aws-sdk/client-kms`); the default `env` provider derives it from `MASTER_KEY`
+/ `ENCRYPTION_KEY`. Security-relevant actions are recorded in a per-org audit
+log.
+
+### Connecting a customer's application
+
+The primary way a user connects an app is **remote login**: they click *Connect
+app*, the worker opens a real browser, streams it into the page over a
+WebSocket (CDP screencast), and the user signs in themselves — including
+two-factor, SSO, and CAPTCHA steps that a headless browser cannot complete.
+AutoDemo captures only the resulting session; the password is typed into the
+target app's own form and is never seen or stored.
+
+This requires the worker to be reachable from the browser:
+
+| Variable | Where | Purpose |
+| --- | --- | --- |
+| `WORKER_PUBLIC_URL` | app | Public https URL of the worker, e.g. `https://autodemo-worker.onrender.com` |
+| `CONNECT_SESSION_TTL_MINUTES` | worker | How long a remote-login browser stays open (default 10) |
+
+Each session is authorized by a single-use 256-bit token that is returned to
+the browser once and stored only as a SHA-256 hash, so no shared secret is
+needed between the app and the worker.
+
+> Deploy the worker as a **web service**, not a background worker — it now
+> listens on `PORT` for `/healthz` and the `/connect` WebSocket.
+
 ### Authenticated sessions
 
 After any successful login the worker saves the browser session (Playwright
@@ -37,14 +77,15 @@ per job. Login success is verified primarily by the auth endpoint's network
 response (2xx vs 4xx), with DOM heuristics only as a tiebreaker; failures dump
 `login-attempt.png`, `.html`, and a network activity log to storage.
 
-For apps behind **MFA / SSO / CAPTCHA**, capture a session manually:
+If remote login is not configured (self-hosting, or a local dev worker), the
+fallback is to capture a session on your own machine:
 
 ```bash
 npm run capture-session -- https://app.example.com
 ```
 
 Log in by hand in the window that opens, press Enter, then paste the resulting
-`storage-state.json` into the project's **Edit → Browser session** section.
+`storage-state.json` into **Browser session → advanced** on the project.
 
 > **Invisible CAPTCHAs (reCAPTCHA v3, hCaptcha, Turnstile) score the browser,
 > not the credentials.** A headless worker scores low and the login API rejects

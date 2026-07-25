@@ -7,6 +7,10 @@ import { sleep } from "@/lib/utils";
 import { loadBrowserFnForVerify } from "@/lib/playwright/browser-eval/run";
 import { launchChromium } from "@/lib/playwright/browser";
 import { recoverOrphanedJobsOnStartup, interruptJob } from "@/lib/workflow/recover-orphaned-jobs";
+import {
+  shutdownConnectSessions,
+  startConnectService,
+} from "./connect-service";
 import type { JobRecord } from "@/lib/db/types";
 
 const log = createLogger("worker");
@@ -67,10 +71,15 @@ export async function runWorker(): Promise<void> {
 
   await recoverOrphanedJobsOnStartup();
 
+  // Public HTTP/WebSocket surface for customer-driven remote logins.
+  const connectServer = startConnectService();
+
   const shutdown = () => {
     if (!running) return;
     log.info("Shutdown signal received — finishing current job then exiting.");
     running = false;
+    connectServer.close();
+    void shutdownConnectSessions();
     if (currentJob) {
       const job = currentJob;
       void interruptJob(job).catch((err) => {

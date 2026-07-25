@@ -33,6 +33,7 @@
     "@remotion/bundler": "^4.0.478",
     "@remotion/cli": "^4.0.478",
     "@remotion/renderer": "^4.0.478",
+    "@types/ws": "^8.18.1",
     "@vercel/blob": "^2.4.0",
     "@xyflow/react": "^12.11.1",
     "archiver": "^8.0.0",
@@ -52,6 +53,7 @@
     "sharp": "^0.35.1",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.6.0",
+    "ws": "^8.21.1",
     "zod": "^4.4.3",
     "zustand": "^5.0.14"
   },

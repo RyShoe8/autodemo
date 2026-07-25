@@ -49,7 +49,6 @@ export const env = {
 
   /** Public base URL of the worker's remote-login service (wss/https). */
   workerPublicUrl: read("WORKER_PUBLIC_URL"),
-  workerServiceToken: read("WORKER_SERVICE_TOKEN"),
   workerHttpPort: Number(read("PORT") ?? read("WORKER_HTTP_PORT") ?? "8080"),
   /** Minutes a remote-login browser stays open before being destroyed. */
   connectSessionTtlMinutes: Number(read("CONNECT_SESSION_TTL_MINUTES") ?? "10"),
@@ -84,7 +83,7 @@ export const env = {
 export const flags = {
   hasMongo: Boolean(env.mongodbUri),
   hasKms: env.kmsProvider === "awskms" && Boolean(env.kmsKeyId),
-  hasWorkerService: Boolean(env.workerPublicUrl && env.workerServiceToken),
+  hasWorkerService: Boolean(env.workerPublicUrl),
   hasOpenAI: Boolean(env.openaiApiKey),
   hasElevenLabs: Boolean(env.elevenLabsApiKey),
   hasBlob: Boolean(env.blobToken),

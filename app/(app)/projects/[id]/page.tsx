@@ -10,6 +10,7 @@ import { ProjectStatusBadge } from "@/components/status/status-badge";
 import { ProjectInfo } from "@/components/projects/project-info";
 import { ProjectBumperPanel } from "@/components/projects/project-bumper-panel";
 import { ProjectDiscoveryPanel } from "@/components/projects/project-discovery-panel";
+import { SessionImportCard } from "@/components/projects/session-import-card";
 import { VideoList } from "@/components/projects/video-list";
 
 export const dynamic = "force-dynamic";
@@ -59,6 +60,7 @@ export default async function ProjectDetailPage({
           />
         </div>
         <div className="space-y-6">
+          <SessionImportCard project={project} />
           <ProjectDiscoveryPanel projectId={id} status={project.status} />
         </div>
       </div>

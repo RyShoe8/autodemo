@@ -88,7 +88,9 @@ class AwsKmsProvider implements KekProvider {
    */
   private async client(): Promise<AwsKmsModule> {
     const specifier = ["@aws-sdk", "client-kms"].join("/");
-    const mod = (await import(specifier).catch(() => null)) as AwsKmsModule | null;
+    const mod = (await import(/* webpackIgnore: true */ specifier).catch(
+      () => null,
+    )) as AwsKmsModule | null;
     if (!mod?.KMSClient) {
       throw new Error(
         "KMS_PROVIDER=awskms requires the @aws-sdk/client-kms package. Install it or set KMS_PROVIDER=env.",
