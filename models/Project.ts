@@ -6,6 +6,9 @@ const ProjectSchema = new Schema(
     url: { type: String, required: true },
     loginEmail: { type: String, default: "" },
     encryptedPassword: { type: String, default: "" },
+    encryptedStorageState: { type: String },
+    storageStateSavedAt: { type: Date },
+    discoveryMaxPages: { type: Number, min: 3, max: 100 },
     prompt: { type: String, default: "" },
     voiceOption: {
       type: String,

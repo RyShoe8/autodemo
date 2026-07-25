@@ -46,6 +46,7 @@ export function EditProjectForm({ project }: { project: ProjectDTO }) {
       bumperDurationSeconds: project.bumperDurationSeconds,
       bumperTitle: project.bumperTitle,
       bumperTagline: project.bumperTagline ?? "",
+      discoveryMaxPages: project.discoveryMaxPages ?? 30,
     },
   });
 
@@ -105,9 +106,22 @@ export function EditProjectForm({ project }: { project: ProjectDTO }) {
               />
             </Field>
           </div>
+          <Field
+            label="Discovery page limit"
+            error={errors.discoveryMaxPages?.message}
+          >
+            <Input
+              type="number"
+              min={3}
+              max={100}
+              className="w-32"
+              {...register("discoveryMaxPages", { valueAsNumber: true })}
+            />
+          </Field>
+
           <p className="text-xs text-muted-foreground">
-            Changing the URL or credentials clears the discovery map — re-run
-            discovery after saving.
+            Changing the URL or credentials clears the discovery map and stored
+            session — re-run discovery after saving.
           </p>
         </CardContent>
       </Card>

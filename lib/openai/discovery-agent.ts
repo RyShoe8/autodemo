@@ -1,7 +1,14 @@
-import { jsonCompletion } from "@/lib/openai/client";
+import { jsonCompletion, jsonCompletionWithImage } from "@/lib/openai/client";
 import { env } from "@/lib/env";
 import { z } from "zod";
 import type { InteractiveElement } from "@/types";
+
+/**
+ * Verbs that mutate or leave app state. Exploration must never trigger these:
+ * discovery runs against real accounts, and its job is to observe, not act.
+ */
+export const MUTATION_RISK_PATTERN =
+  /delete|remove|archive|deactivate|disable|destroy|revoke|pay|purchase|buy|checkout|subscribe|upgrade|downgrade|invite|send|share|publish|submit|save|confirm|approve|reject|merge|transfer|export|import|upload|sign out|log ?out/i;
 
 export const discoveryActionSchema = z.object({
   action: z.enum(["click", "type", "done"]),
@@ -65,6 +72,82 @@ export async function resolveDiscoveryNextAction(
 
   const parsed = discoveryActionSchema.safeParse(raw);
   if (!parsed.success) {
+    return null;
+  }
+  return parsed.data;
+}
+
+/* ------------------------------------------------------------------------- */
+/* Per-page exploration (crawler layer 2): observe-only, vision-guided.      */
+/* ------------------------------------------------------------------------- */
+
+const PAGE_EXPLORE_SYSTEM_PROMPT = `You are cataloging a SaaS application page for documentation. You are already authenticated.
+You see a screenshot of the page plus a list of interactive elements. Pick ONE element that reveals hidden UI worth a screenshot: a modal, dropdown menu, side panel, tab, or expandable section.
+
+Return STRICT JSON: { "action": "click" | "done", "role"?: string, "name"?: string, "reason": string }
+
+HARD RULES — you are in OBSERVE-ONLY mode:
+1. NEVER pick anything that mutates data or account state: no Delete/Remove/Archive, no Save/Submit/Confirm/Send, no purchases or plan changes, no invites, no Sign out.
+2. NEVER pick login/registration/OAuth/password-reset elements.
+3. NEVER pick plain navigation links to other pages — those are crawled separately. Prefer buttons that open overlays ON this page ("New…", "Add…", "Create…", "Filter", "Settings", "Options", "⋯", tab labels). Opening a "New X" dialog is fine — submitting it is forbidden and will not happen.
+4. Do not repeat an element listed in ALREADY EXPLORED.
+5. If nothing safe and interesting remains, return { "action": "done", "reason": "..." }.
+Use the exact "role" and "name" from the element list.`;
+
+export const pageExploreActionSchema = z.object({
+  action: z.enum(["click", "done"]),
+  role: z.string().optional(),
+  name: z.string().optional(),
+  reason: z.string(),
+});
+
+export type PageExploreAction = z.infer<typeof pageExploreActionSchema>;
+
+/**
+ * Pick the next observe-only action on the current page. Sends the screenshot
+ * when available so the model can see what it is exploring. Returns null on
+ * any model failure and re-checks the mutation blocklist on the way out.
+ */
+export async function resolvePageExploreAction(opts: {
+  url: string;
+  routePattern: string;
+  interactives: InteractiveElement[];
+  explored: string[];
+  screenshotBase64?: string;
+}): Promise<PageExploreAction | null> {
+  const safeInteractives = opts.interactives.filter(
+    (i) => !MUTATION_RISK_PATTERN.test(i.name),
+  );
+  if (safeInteractives.length === 0) return null;
+
+  const user = [
+    `PAGE URL: ${opts.url}`,
+    `ROUTE PATTERN: ${opts.routePattern}`,
+    `ALREADY EXPLORED: ${opts.explored.length > 0 ? opts.explored.join("; ") : "none"}`,
+    `INTERACTIVE ELEMENTS:`,
+    JSON.stringify(safeInteractives.map((i) => ({ role: i.role, name: i.name }))),
+  ].join("\n");
+
+  const raw = opts.screenshotBase64
+    ? await jsonCompletionWithImage({
+        system: PAGE_EXPLORE_SYSTEM_PROMPT,
+        user,
+        imageBase64: opts.screenshotBase64,
+        model: env.openaiModelRecord,
+      })
+    : await jsonCompletion({
+        system: PAGE_EXPLORE_SYSTEM_PROMPT,
+        user,
+        model: env.openaiModelRecord,
+      });
+
+  const parsed = pageExploreActionSchema.safeParse(raw);
+  if (!parsed.success) return null;
+  if (
+    parsed.data.action === "click" &&
+    parsed.data.name &&
+    MUTATION_RISK_PATTERN.test(parsed.data.name)
+  ) {
     return null;
   }
   return parsed.data;

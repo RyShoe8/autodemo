@@ -23,9 +23,40 @@ Heavy native dependencies (Playwright, Remotion renderer, FFmpeg) are **only** u
 
 ```
 discover job:  queued -> discovering -> building_workflow -> awaiting_approval
+recapture job: queued -> discovering -> completed   (refresh screenshots only)
 produce job:   queued -> recording -> generating_script -> generating_audio -> rendering -> exporting -> completed
 (any failure -> failed)
 ```
+
+### Authenticated sessions
+
+After any successful login the worker saves the browser session (Playwright
+storage state, AES-256-GCM-encrypted) on the project and reuses it for every
+later discovery/recapture/recording job, so login happens rarely instead of
+per job. Login success is verified primarily by the auth endpoint's network
+response (2xx vs 4xx), with DOM heuristics only as a tiebreaker; failures dump
+`login-attempt.png`, `.html`, and a network activity log to storage.
+
+For apps behind **MFA / SSO / CAPTCHA**, capture a session manually:
+
+```bash
+node scripts/capture-session.mjs https://app.example.com
+```
+
+Log in by hand in the window that opens, press Enter, then paste the resulting
+`storage-state.json` into the project's **Edit → Browser session** section.
+
+### Site mapping
+
+Discovery BFS-crawls same-origin routes deduplicated by normalized route
+pattern (`/items/42` → `/items/:id`), capturing per page: viewport + full-page
+screenshots (stable storage keys, so re-runs overwrite), interactive elements,
+visible text, and the navigation graph (edges). With OpenAI configured, a
+vision-guided agent additionally opens up to 3 safe overlays per page (modals,
+menus, tabs) in **observe-only mode** — it never submits forms or clicks
+destructive/mutating actions. The page limit is configurable per project
+(default 30). The map is saved incrementally after every page, so a crash
+keeps partial progress.
 
 ### Graceful degradation
 

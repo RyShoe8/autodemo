@@ -3,6 +3,7 @@ import { db } from "@/lib/db";
 import { toProjectDTO } from "@/lib/serialize";
 import { PageHeader } from "@/components/layout/page-header";
 import { EditProjectForm } from "@/components/forms/edit-project-form";
+import { SessionImportCard } from "@/components/projects/session-import-card";
 
 export const dynamic = "force-dynamic";
 
@@ -22,7 +23,10 @@ export default async function EditProjectPage({
         title="Edit project"
         description={`Update settings for ${project.name}.`}
       />
-      <EditProjectForm project={project} />
+      <div className="space-y-6">
+        <EditProjectForm project={project} />
+        <SessionImportCard project={project} />
+      </div>
     </div>
   );
 }

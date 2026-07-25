@@ -42,15 +42,33 @@ function buildUserPrompt(input: WorkflowGenInput): string {
 
   const interactives =
     applicationMap.interactives
-      ?.slice(0, 25)
+      ?.slice(0, 40)
       .map((i) => `${i.role}: ${i.name}`)
       .join(", ") || "(none)";
+
+  const pages =
+    applicationMap.pages
+      .slice(0, 30)
+      .map((p) => {
+        const overlays = p.actionScreenshots?.length
+          ? ` [overlays: ${p.actionScreenshots.map((a) => a.triggerText).join(", ")}]`
+          : "";
+        return `${p.title} — ${p.url}${overlays}`;
+      })
+      .join("\n") || "(none)";
+
+  const graph =
+    applicationMap.edges
+      ?.slice(0, 40)
+      .map((e) => `${e.from} -[${e.label}]-> ${e.to}`)
+      .join("\n") || "(none)";
 
   return [
     `VIDEO GOAL:\n${prompt.slice(0, 500)}`,
     `NAV LINKS (label → url):\n${navLinks}`,
     `NAVIGATION LABELS:\n${applicationMap.navigation.slice(0, 12).join(", ") || "(none)"}`,
-    `PAGE TITLES:\n${applicationMap.pages.map((p) => p.title).join(", ") || "(none)"}`,
+    `PAGES (title — url [known overlays/modals]):\n${pages}`,
+    `NAVIGATION GRAPH (from -[link label]-> to):\n${graph}`,
     `INTERACTIVE CONTROLS:\n${interactives}`,
     `VISIBLE UI TEXT (sample):\n${applicationMap.uiText.slice(0, 25).join(", ")}`,
   ].join("\n\n");

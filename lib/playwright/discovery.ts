@@ -11,9 +11,28 @@ import { dismissOverlays } from "@/lib/playwright/overlays";
 import { fetchAndStoreSiteLogo } from "@/lib/playwright/favicon";
 import { browserEval } from "@/lib/playwright/browser-eval/run";
 import { launchChromium } from "@/lib/playwright/browser";
-import type { ApplicationMap, DiscoveredPage, InteractiveElement, ActionScreenshot } from "@/types";
-import { env, flags } from "@/lib/env";
-import { resolveDiscoveryNextAction } from "@/lib/openai/discovery-agent";
+import {
+  CrawlFrontier,
+  EdgeCollector,
+  actionSlug,
+  normalizeRoute,
+  routeSlug,
+} from "@/lib/playwright/crawler";
+import {
+  dumpLoginEvidence,
+  watchLoginNetwork,
+  type LoginNetworkWatcher,
+} from "@/lib/playwright/login-verify";
+import {
+  persistContextSession,
+  type StorageState,
+} from "@/lib/playwright/session";
+import type { ApplicationMap, DiscoveredPage, InteractiveElement } from "@/types";
+import { flags } from "@/lib/env";
+import {
+  MUTATION_RISK_PATTERN,
+  resolvePageExploreAction,
+} from "@/lib/openai/discovery-agent";
 import type { Reporter as PipelineReporter } from "@/lib/workflow/context";
 
 export interface DiscoverOptions {
@@ -25,6 +44,12 @@ export interface DiscoverOptions {
   maxPages?: number;
   /** Skip favicon fetch when the project already has a user-uploaded logo. */
   existingLogoUrl?: string;
+  /** Stored authenticated session to reuse (skips login when still valid). */
+  storageState?: StorageState | null;
+  /** Max AI overlay-exploration actions per page (0 disables). */
+  explorePerPage?: number;
+  /** Called with the partial map after each captured page (incremental saves). */
+  onPartial?: (map: ApplicationMap) => Promise<void>;
 }
 
 const NAV_SELECTORS = [
@@ -94,7 +119,7 @@ async function hasAppNavShell(page: Page): Promise<boolean> {
   return (await appLink.count()) > 0;
 }
 
-async function verifyAuthenticated(
+export async function verifyAuthenticated(
   page: Page,
   origin: string,
 ): Promise<{ ok: boolean; reason: string }> {
@@ -188,12 +213,22 @@ async function waitForLoginResult(
   origin: string,
   preSubmitErrors: string[],
   reporter?: PipelineReporter,
+  watcher?: LoginNetworkWatcher,
 ): Promise<boolean> {
   const deadline = Date.now() + 12000;
   const knownErrors = new Set(preSubmitErrors);
   let pendingError: string | null = null;
 
   while (Date.now() < deadline) {
+    // Network truth first: the auth endpoint's status code beats DOM guesses.
+    const netVerdict = watcher?.verdict() ?? "unknown";
+    if (netVerdict === "failure") {
+      await reporter?.log(
+        `Login rejected by server (${watcher!.detail()}).`,
+      );
+      return false;
+    }
+
     const currentUrl = page.url();
     let pathname = currentUrl;
     try {
@@ -205,6 +240,13 @@ async function waitForLoginResult(
     const onAuthRoute = AUTH_ROUTE_PATTERN.test(pathname);
     const hasPassword = await hasVisiblePasswordField(page);
     const loggedIn = await hasLoggedInSignals(page);
+
+    if (netVerdict === "success" && !hasPassword) {
+      await reporter?.log(
+        `Login confirmed by network (${watcher!.detail()}).`,
+      );
+      return true;
+    }
 
     const currentErrors = await collectLoginErrorTexts(page);
     const newError = currentErrors.find((t) => !knownErrors.has(t)) ?? null;
@@ -227,6 +269,13 @@ async function waitForLoginResult(
     }
 
     await page.waitForTimeout(500);
+  }
+
+  if (watcher?.verdict() === "success") {
+    await reporter?.log(
+      `Login confirmed by network at deadline (${watcher.detail()}).`,
+    );
+    return true;
   }
 
   const probe = await verifyAuthenticated(page, origin);
@@ -285,20 +334,39 @@ async function findLoginFields(page: Page): Promise<LoginFields | null> {
 /** Exact-ish sign-in button label — must not match "Continue with Google" or "Don't have an account? Register". */
 const SIGN_IN_BUTTON_EXACT = /^\s*(sign in|log in|login|signin|submit)\s*$/i;
 
+/**
+ * First visible submit control in scope whose label is not an OAuth/register/
+ * reset action ("Continue with Google" is type="submit" on some sites).
+ */
+async function firstSafeSubmitButton(scope: Locator): Promise<Locator | null> {
+  const candidates = scope.locator(
+    'button[type="submit"]:visible, input[type="submit"]:visible',
+  );
+  const count = await candidates.count().catch(() => 0);
+  for (let i = 0; i < Math.min(count, 6); i++) {
+    const btn = candidates.nth(i);
+    const label = (
+      (await btn.innerText().catch(() => "")) ||
+      (await btn.getAttribute("value").catch(() => null)) ||
+      (await btn.getAttribute("aria-label").catch(() => null)) ||
+      ""
+    ).trim();
+    if (label && AUTH_FLOW_ELEMENT_PATTERN.test(label)) continue;
+    if (await btn.isVisible().catch(() => false)) return btn;
+  }
+  return null;
+}
+
 async function submitLoginForm(page: Page, fields: LoginFields): Promise<void> {
   const form = fields.passwordField.locator("xpath=ancestor::form").first();
   const hasForm = (await form.count().catch(() => 0)) > 0;
 
-  // 1. Prefer the real submit button (form-scoped first, then global).
+  // 1. Prefer the real submit button (form-scoped first, then global),
+  //    skipping any OAuth/register-labelled submit controls.
   const submitScopes = hasForm ? [form, page.locator("body")] : [page.locator("body")];
   for (const scope of submitScopes) {
-    const submitBtn = scope
-      .locator('button[type="submit"]:visible, input[type="submit"]:visible')
-      .first();
-    if (
-      (await submitBtn.count().catch(() => 0)) > 0 &&
-      (await submitBtn.isVisible().catch(() => false))
-    ) {
+    const submitBtn = await firstSafeSubmitButton(scope);
+    if (submitBtn) {
       await submitBtn.click({ timeout: 8000 }).catch(() => {});
       await page.waitForTimeout(1000);
       await waitForAppReady(page);
@@ -340,6 +408,7 @@ export async function login(
     await reporter.missing("target application password");
     return false;
   }
+  let watcher: LoginNetworkWatcher | null = null;
   try {
     const origin = new URL(page.url()).origin;
     const found = await resolveLoginPage(page, origin, reporter);
@@ -360,6 +429,8 @@ export async function login(
       await reporter.log("Login form detected inside iframe.");
     }
 
+    watcher = watchLoginNetwork(page, origin);
+
     if ((await fields.emailField.count()) > 0 && email) {
       await fields.emailField.click({ force: true }).catch(() => {});
       await fields.emailField.fill("");
@@ -371,9 +442,16 @@ export async function login(
 
     const preSubmitErrors = await collectLoginErrorTexts(page);
     await reporter.log("Submitting login form…");
+    watcher.markSubmit();
     await submitLoginForm(page, fields);
 
-    let success = await waitForLoginResult(page, origin, preSubmitErrors, reporter);
+    let success = await waitForLoginResult(
+      page,
+      origin,
+      preSubmitErrors,
+      reporter,
+      watcher,
+    );
     if (!success) {
       await reporter.log("Login may have failed — retrying once…");
       await waitForAppReady(page);
@@ -384,8 +462,15 @@ export async function login(
         }
         await retryFields.passwordField.fill(password);
         const retryPreErrors = await collectLoginErrorTexts(page);
+        watcher.markSubmit();
         await submitLoginForm(page, retryFields);
-        success = await waitForLoginResult(page, origin, retryPreErrors, reporter);
+        success = await waitForLoginResult(
+          page,
+          origin,
+          retryPreErrors,
+          reporter,
+          watcher,
+        );
       }
     }
 
@@ -404,19 +489,10 @@ export async function login(
 
     await logLoginFailureState(page, reporter);
     await reporter.log(`Probe result: ${probe.reason}.`);
+    await reporter.log(`Network: ${watcher.detail()}.`);
 
     if (options?.projectId) {
-      try {
-        const buffer = await page.screenshot({ fullPage: false });
-        await storage.save(
-          `projects/${options.projectId}/discovery/login-attempt.png`,
-          buffer,
-          "image/png",
-        );
-        await reporter.log("Saved login-attempt.png for debugging.");
-      } catch {
-        /* non-fatal */
-      }
+      await dumpLoginEvidence(page, options.projectId, watcher, reporter);
     }
 
     await reporter.log(
@@ -428,6 +504,8 @@ export async function login(
       `Login attempt failed: ${err instanceof Error ? err.message : String(err)}`,
     );
     return false;
+  } finally {
+    watcher?.stop();
   }
 }
 
@@ -478,19 +556,37 @@ export async function crawlNavigation(
   return result;
 }
 
-/** Capture a screenshot of the current page and persist it to storage. */
-export async function captureScreenshots(
+/**
+ * Capture full-page + viewport screenshots with stable, route-derived storage
+ * keys so re-runs and recapture jobs overwrite instead of accumulating.
+ */
+export async function capturePageScreenshots(
   page: Page,
   projectId: string,
-  index: number,
-): Promise<string> {
-  const buffer = await page.screenshot({ fullPage: true, type: "jpeg", quality: 80 });
-  const { url } = await storage.save(
-    `projects/${projectId}/discovery/page-${index}.jpg`,
-    buffer,
+  routePattern: string,
+): Promise<{ fullUrl: string; viewportUrl: string }> {
+  const slug = routeSlug(routePattern);
+  const fullBuffer = await page.screenshot({
+    fullPage: true,
+    type: "jpeg",
+    quality: 80,
+  });
+  const { url: fullUrl } = await storage.save(
+    `projects/${projectId}/discovery/pages/${slug}/full.jpg`,
+    fullBuffer,
     "image/jpeg",
   );
-  return url;
+  const viewportBuffer = await page.screenshot({
+    fullPage: false,
+    type: "jpeg",
+    quality: 80,
+  });
+  const { url: viewportUrl } = await storage.save(
+    `projects/${projectId}/discovery/pages/${slug}/viewport.jpg`,
+    viewportBuffer,
+    "image/jpeg",
+  );
+  return { fullUrl, viewportUrl };
 }
 
 /** Extract visible interactive controls from the current page. */
@@ -524,15 +620,216 @@ function discoveryFailureHint(err: unknown, detail: string): string {
   return "Ensure the target URL is reachable from the worker network.";
 }
 
+
+interface CrawlLink {
+  label: string;
+  href: string;
+  score: number;
+  isAuth: boolean;
+}
+
+/** Deterministic overlay capture for runs without OpenAI: click obvious
+ * "New / Add / Filter"-style triggers and screenshot the revealed UI. */
+async function captureDeterministicOverlays(args: {
+  page: Page;
+  projectId: string;
+  routePattern: string;
+  pageRef: DiscoveredPage;
+  reporter: PipelineReporter;
+}): Promise<void> {
+  const { page, projectId, routePattern, pageRef, reporter } = args;
+  const slug = routeSlug(routePattern);
+  const baseUrl = pageRef.url;
+
+  const interactives = await extractInteractives(page);
+  const triggers = interactives
+    .filter((i) => {
+      if (i.role !== "button" && i.tag.toLowerCase() !== "button") return false;
+      if (AUTH_FLOW_ELEMENT_PATTERN.test(i.name)) return false;
+      if (MUTATION_RISK_PATTERN.test(i.name)) return false;
+      return /add|new|create|edit|settings|menu|filter|options/i.test(i.name);
+    })
+    .slice(0, 3);
+
+  for (const trigger of triggers) {
+    try {
+      const el = page
+        .getByRole("button", { name: trigger.name, exact: false })
+        .first();
+      if (!(await el.isVisible().catch(() => false))) continue;
+      await el.click({ timeout: 2000 });
+      await page.waitForTimeout(800);
+
+      if (normalizeRoute(page.url()) === routePattern) {
+        const buffer = await page.screenshot({
+          fullPage: false,
+          type: "jpeg",
+          quality: 80,
+        });
+        const { url } = await storage.save(
+          `projects/${projectId}/discovery/pages/${slug}/action-${actionSlug(trigger.name)}.jpg`,
+          buffer,
+          "image/jpeg",
+        );
+        pageRef.actionScreenshots!.push({
+          type: "modal",
+          triggerText: trigger.name,
+          screenshot: url,
+        });
+        await reporter.log(`Captured overlay "${trigger.name}" on ${routePattern}.`);
+      }
+
+      await page.keyboard.press("Escape").catch(() => {});
+      await page.waitForTimeout(300);
+      if (normalizeRoute(page.url()) !== routePattern) {
+        await page.goto(baseUrl, { waitUntil: "load", timeout: 30000 }).catch(() => {});
+        await waitForAppReady(page);
+      }
+    } catch {
+      /* continue with next trigger */
+    }
+  }
+}
+
+/** AI-guided, observe-only overlay exploration for a single crawled page. */
+async function explorePageOverlays(args: {
+  page: Page;
+  projectId: string;
+  routePattern: string;
+  pageRef: DiscoveredPage;
+  frontier: CrawlFrontier;
+  edges: EdgeCollector;
+  reporter: PipelineReporter;
+  maxActions: number;
+}): Promise<void> {
+  const { page, projectId, routePattern, pageRef, frontier, edges, reporter } =
+    args;
+  const slug = routeSlug(routePattern);
+  const baseUrl = pageRef.url;
+  const explored: string[] = [];
+
+  for (let i = 0; i < args.maxActions; i++) {
+    const interactives = (await extractInteractives(page)).filter(
+      (el) =>
+        !AUTH_FLOW_ELEMENT_PATTERN.test(el.name) &&
+        !MUTATION_RISK_PATTERN.test(el.name),
+    );
+    if (interactives.length === 0) return;
+
+    let screenshotBase64: string | undefined;
+    try {
+      screenshotBase64 = (
+        await page.screenshot({ fullPage: false, type: "jpeg", quality: 60 })
+      ).toString("base64");
+    } catch {
+      /* explore without vision */
+    }
+
+    const action = await resolvePageExploreAction({
+      url: page.url(),
+      routePattern,
+      interactives,
+      explored,
+      screenshotBase64,
+    });
+    if (!action || action.action !== "click" || !action.name || !action.role) {
+      if (action?.reason) {
+        await reporter.log(`Exploration of ${routePattern} done: ${action.reason}`);
+      }
+      return;
+    }
+    explored.push(action.name);
+
+    try {
+      const loc = page
+        .getByRole(action.role as Parameters<Page["getByRole"]>[0], {
+          name: action.name,
+          exact: false,
+        })
+        .first();
+      if (!(await loc.isVisible().catch(() => false))) continue;
+      await loc.click({ timeout: 3000 });
+      await page.waitForTimeout(800);
+      await waitForAppReady(page);
+    } catch {
+      continue;
+    }
+
+    const currentUrl = page.url();
+    let sameRoute = false;
+    try {
+      sameRoute =
+        new URL(currentUrl).origin === new URL(baseUrl).origin &&
+        normalizeRoute(currentUrl) === routePattern;
+    } catch {
+      sameRoute = false;
+    }
+
+    if (!sameRoute) {
+      // The click navigated: record the edge, queue the target, reset.
+      try {
+        if (new URL(currentUrl).origin === new URL(baseUrl).origin) {
+          const targetPattern = normalizeRoute(currentUrl);
+          edges.add(routePattern, targetPattern, action.name);
+          frontier.add(currentUrl, action.name, routePattern);
+          await reporter.log(
+            `"${action.name}" navigated to ${targetPattern} — queued for crawl.`,
+          );
+        } else {
+          await reporter.log(
+            `"${action.name}" left the app origin — returning.`,
+          );
+        }
+      } catch {
+        /* unparseable URL */
+      }
+      await page.goto(baseUrl, { waitUntil: "load", timeout: 30000 }).catch(() => {});
+      await waitForAppReady(page);
+      continue;
+    }
+
+    // Same route: an overlay/modal/menu opened — capture it.
+    try {
+      const buffer = await page.screenshot({
+        fullPage: false,
+        type: "jpeg",
+        quality: 80,
+      });
+      const { url: shotUrl } = await storage.save(
+        `projects/${projectId}/discovery/pages/${slug}/action-${actionSlug(action.name)}.jpg`,
+        buffer,
+        "image/jpeg",
+      );
+      pageRef.actionScreenshots!.push({
+        type: "modal",
+        triggerText: action.name,
+        screenshot: shotUrl,
+      });
+      await reporter.log(`Captured overlay "${action.name}" on ${routePattern}.`);
+    } catch {
+      /* non-fatal */
+    }
+
+    await page.keyboard.press("Escape").catch(() => {});
+    await page.waitForTimeout(400);
+    if (normalizeRoute(page.url()) !== routePattern) {
+      await page.goto(baseUrl, { waitUntil: "load", timeout: 30000 }).catch(() => {});
+      await waitForAppReady(page);
+    }
+  }
+}
+
 /**
- * Visit the application, log in, crawl primary navigation, capture screenshots
- * and visible text, and return an application map.
+ * Build the application map: reuse or establish an authenticated session, then
+ * BFS-crawl same-origin routes (deduped by normalized route pattern), capture
+ * screenshots + interactive elements per page, explore overlays, and record
+ * the navigation graph. Saves partial progress after every page.
  */
 export async function discoverApplication(
   opts: DiscoverOptions,
 ): Promise<ApplicationMap> {
   const { reporter, projectId, url, email, password } = opts;
-  const maxPages = opts.maxPages ?? 6;
+  const maxPages = Math.max(3, Math.min(100, opts.maxPages ?? 30));
   const origin = new URL(url).origin;
 
   let browser: Browser | null = null;
@@ -542,46 +839,70 @@ export async function discoverApplication(
     const context = await browser.newContext({
       viewport: { width: 1280, height: 800 },
       ignoreHTTPSErrors: true,
+      ...(opts.storageState ? { storageState: opts.storageState } : {}),
     });
     const page = await context.newPage();
 
     await reporter.log(`Navigating to ${url}`);
     await navigateAndWait(page, url);
 
-    let loggedIn = await login(page, email, password, reporter, { projectId });
-    if (!loggedIn) {
+    // 1. Establish an authenticated session (stored session first).
+    let loggedIn = false;
+    if (opts.storageState) {
       const probe = await verifyAuthenticated(page, origin);
       if (probe.ok) {
-        await reporter.log(
-          `Login verified via navigation probe (SPA): ${probe.reason}.`,
-        );
         loggedIn = true;
+        await reporter.log(`Reusing stored session (${probe.reason}).`);
       } else {
         await reporter.log(
-          `Warning: discovery may be unauthenticated — ${probe.reason}.`,
+          "Stored session no longer authenticated — attempting fresh login.",
         );
+        await navigateAndWait(page, url);
+      }
+    }
+    if (!loggedIn) {
+      loggedIn = await login(page, email, password, reporter, { projectId });
+      if (!loggedIn) {
+        const probe = await verifyAuthenticated(page, origin);
+        if (probe.ok) {
+          await reporter.log(
+            `Login verified via navigation probe (SPA): ${probe.reason}.`,
+          );
+          loggedIn = true;
+        } else {
+          await reporter.log(
+            `Warning: discovery may be unauthenticated — ${probe.reason}.`,
+          );
+        }
+      }
+      if (loggedIn) {
+        await persistContextSession(projectId, context, reporter);
       }
     }
 
     await waitForAppReady(page);
 
+    // 2. Crawl.
     const pages: DiscoveredPage[] = [];
     const screenshots: string[] = [];
     const uiText = new Set<string>();
     const interactivesMap = new Map<string, InteractiveElement>();
+    const frontier = new CrawlFrontier(origin);
+    const edgeCollector = new EdgeCollector();
+    const canonicalUrl = new Map<string, string>();
 
-    async function capturePageState() {
-      const text = await extractVisibleText(page);
-      text.forEach((t) => uiText.add(t));
-      const items = await extractInteractives(page);
-      for (const item of items) {
-        interactivesMap.set(`${item.role}:${item.name}`, item);
-      }
+    const explorePerPage =
+      opts.explorePerPage ?? (flags.hasOpenAI && loggedIn ? 3 : 0);
+
+    const navLinks = await crawlNavigation(page, origin, reporter);
+    await reporter.log(`Found ${navLinks.length} navigation links.`);
+
+    const appHomeUrl = page.url();
+    const homePattern = normalizeRoute(appHomeUrl);
+    frontier.add(appHomeUrl, "Home", null);
+    for (const link of navLinks) {
+      frontier.add(link.href, link.label, homePattern);
     }
-
-    let captured = 0;
-    let navLinks: NavLink[] = [];
-    const edges: { from: string; to: string; label: string }[] = [];
 
     const isOnOrigin = () => {
       try {
@@ -591,281 +912,121 @@ export async function discoverApplication(
       }
     };
 
-    const returnToOrigin = async (fallbackUrl: string) => {
-      await page.goBack({ waitUntil: "load", timeout: 15000 }).catch(() => {});
-      if (!isOnOrigin()) {
-        await page
-          .goto(fallbackUrl, { waitUntil: "load", timeout: 30000 })
-          .catch(() => {});
+    const buildMap = (): ApplicationMap => ({
+      pages,
+      navigation: navLinks.map((l) => l.label),
+      navLinks: navLinks.map((l) => ({ label: l.label, href: l.href })),
+      interactives: Array.from(interactivesMap.values()).slice(0, 50),
+      screenshots,
+      uiText: Array.from(uiText).slice(0, 400),
+      edges: edgeCollector.edges
+        .map((e) => ({
+          from: canonicalUrl.get(e.from) ?? "",
+          to: canonicalUrl.get(e.to) ?? "",
+          label: e.label,
+        }))
+        .filter((e) => e.from !== "" && e.to !== "" && e.from !== e.to),
+    });
+
+    while (frontier.pending > 0 && frontier.visitedCount < maxPages) {
+      const entry = frontier.next();
+      if (!entry) break;
+      const queuedPattern = normalizeRoute(entry.url);
+      if (frontier.hasVisited(queuedPattern)) continue;
+
+      try {
+        await navigateAndWait(page, entry.url);
+      } catch {
+        await reporter.log(`Skipped "${entry.label}" (failed to load).`);
+        frontier.markVisited(queuedPattern);
+        continue;
       }
-      await waitForAppReady(page);
-    };
+      frontier.markVisited(queuedPattern);
+      if (!isOnOrigin()) continue;
 
-    if (flags.hasOpenAI && loggedIn) {
-      // Populate nav links first so the map always includes the app's modules.
-      navLinks = await crawlNavigation(page, origin, reporter);
-      await reporter.log(`Found ${navLinks.length} navigation links.`);
-      const appHomeUrl = page.url();
+      const pattern = normalizeRoute(page.url());
+      if (AUTH_ROUTE_PATTERN.test(pattern)) continue;
+      if (entry.fromPattern) {
+        edgeCollector.add(entry.fromPattern, pattern, entry.label);
+      }
+      if (pattern !== queuedPattern) {
+        // Redirected to a route we may have already captured.
+        if (frontier.hasVisited(pattern)) continue;
+        frontier.markVisited(pattern);
+      }
 
-      await reporter.log(`Starting autonomous AI discovery...`);
-      const history: string[] = [];
-      let currentPageBaseUrl = "";
-      let currentPageRef: DiscoveredPage | null = null;
-      let actionCount = 0;
-
-      // Seed exploration: visit each primary module page before free exploration.
-      const moduleLinks = navLinks
-        .filter((l) => l.href.startsWith(origin))
-        .slice(0, Math.max(0, maxPages - 1));
-
-      const captureCurrentPage = async (): Promise<DiscoveredPage> => {
-        const shot = await captureScreenshots(page, projectId, captured);
-        await capturePageState();
-        const pageRef: DiscoveredPage = {
-          url: page.url(),
-          title: await page.title(),
-          screenshot: shot,
-          actionScreenshots: [],
-        };
-        pages.push(pageRef);
-        screenshots.push(shot);
-        currentPageBaseUrl = page.url();
-        captured++;
-        await reporter.log(`Captured base page: "${pageRef.title}"`);
-        return pageRef;
+      const shots = await capturePageScreenshots(page, projectId, pattern);
+      const pageRef: DiscoveredPage = {
+        url: page.url(),
+        title: (await page.title()) || entry.label,
+        routePattern: pattern,
+        screenshot: shots.fullUrl,
+        viewportScreenshot: shots.viewportUrl,
+        actionScreenshots: [],
       };
+      pages.push(pageRef);
+      screenshots.push(shots.fullUrl);
+      canonicalUrl.set(pattern, pageRef.url);
+      await reporter.log(
+        `Captured page ${pages.length}/${maxPages}: "${pageRef.title}" (${pattern})`,
+      );
 
-      for (const link of moduleLinks) {
-        if (captured >= maxPages) break;
-        try {
-          await navigateAndWait(page, link.href);
-          if (!isOnOrigin()) continue;
-          currentPageRef = await captureCurrentPage();
-          edges.push({ from: appHomeUrl, to: page.url(), label: link.label });
-        } catch {
-          await reporter.log(`Skipped module "${link.label}" (failed to load).`);
-        }
+      (await extractVisibleText(page)).forEach((t) => uiText.add(t));
+      for (const item of await extractInteractives(page)) {
+        interactivesMap.set(`${item.role}:${item.name}`, item);
       }
 
-      // Return to the app home for free exploration.
-      if (page.url() !== appHomeUrl) {
-        await navigateAndWait(page, appHomeUrl);
-        currentPageBaseUrl = "";
-        currentPageRef = null;
-      }
-
-      const knownModules = navLinks.map((l) => l.label);
-
-      while (captured < maxPages && actionCount < 100) {
-        await waitForAppReady(page);
-
-        if (!isOnOrigin()) {
-          await reporter.log(`Left app origin (${page.url()}) — returning.`);
-          actionCount++;
-          await returnToOrigin(appHomeUrl);
-          if (!isOnOrigin()) {
-            await reporter.log("Could not return to app origin — stopping exploration.");
-            break;
-          }
-          continue;
-        }
-
-        const currentUrl = page.url();
-
-        if (currentUrl !== currentPageBaseUrl || !currentPageRef) {
-          currentPageRef = await captureCurrentPage();
-        }
-
-        const interactives = (await extractInteractives(page)).filter(
-          (i) => !AUTH_FLOW_ELEMENT_PATTERN.test(i.name),
+      // Queue outgoing same-origin links and record graph edges.
+      try {
+        const links = await browserEval<CrawlLink[]>(
+          page,
+          "crawl-fallback.fn.js",
+          origin,
         );
-        const nextAction = await resolveDiscoveryNextAction(
-          currentUrl,
-          history,
-          interactives,
-          { origin, knownModules },
-        );
-
-        if (!nextAction || nextAction.action === "done") {
-          await reporter.log(`AI agent finished exploration: ${nextAction?.reason || "exhausted"}`);
-          break;
+        let queued = 0;
+        for (const link of links) {
+          if (link.isAuth) continue;
+          edgeCollector.add(pattern, normalizeRoute(link.href), link.label);
+          if (queued < 25 && frontier.add(link.href, link.label, pattern)) {
+            queued++;
+          }
         }
+      } catch {
+        /* link extraction is best-effort */
+      }
 
-        actionCount++;
+      // Overlay exploration (AI when available, deterministic otherwise).
+      if (explorePerPage > 0) {
+        await explorePageOverlays({
+          page,
+          projectId,
+          routePattern: pattern,
+          pageRef,
+          frontier,
+          edges: edgeCollector,
+          reporter,
+          maxActions: explorePerPage,
+        });
+      } else if (loggedIn) {
+        await captureDeterministicOverlays({
+          page,
+          projectId,
+          routePattern: pattern,
+          pageRef,
+          reporter,
+        });
+      }
 
-        if (nextAction.name && AUTH_FLOW_ELEMENT_PATTERN.test(nextAction.name)) {
-          await reporter.log(`Blocked auth-flow action "${nextAction.name}".`);
-          history.push(`Blocked "${nextAction.name}" (auth flow)`);
-          continue;
-        }
-
-        let pathname = "";
+      if (opts.onPartial) {
         try {
-          pathname = new URL(currentUrl).pathname;
+          await opts.onPartial(buildMap());
         } catch {
-          /* keep empty */
-        }
-        if (AUTH_ROUTE_PATTERN.test(pathname)) {
-          await reporter.log(
-            `On auth route (${pathname}) — returning to app instead of exploring it.`,
-          );
-          await navigateAndWait(page, appHomeUrl);
-          currentPageBaseUrl = "";
-          currentPageRef = null;
-          continue;
-        }
-
-        const actionDesc = nextAction.action === "type"
-          ? `Typed "${nextAction.value}" into ${nextAction.role} "${nextAction.name}"`
-          : `Clicked ${nextAction.role} "${nextAction.name}"`;
-
-        await reporter.log(`AI Action: ${actionDesc} - Reason: ${nextAction.reason}`);
-        history.push(actionDesc);
-
-        try {
-          if (nextAction.name && nextAction.role) {
-            const loc = page.getByRole(nextAction.role as any, { name: nextAction.name, exact: false }).first();
-            if (await loc.isVisible().catch(() => false)) {
-              if (nextAction.action === "type" && nextAction.value) {
-                await loc.fill(nextAction.value, { timeout: 3000 });
-                await loc.press("Enter");
-              } else {
-                await loc.click({ timeout: 3000 });
-              }
-              await page.waitForTimeout(1000);
-              await waitForAppReady(page);
-
-              const newUrl = page.url();
-              if (!isOnOrigin()) {
-                await reporter.log(
-                  `Action "${nextAction.name}" left app origin (${newUrl}) — returning.`,
-                );
-                edges.push({ from: currentUrl, to: newUrl, label: `${nextAction.name} (external)` });
-                history.push(`"${nextAction.name}" led off-origin — do not repeat`);
-                await returnToOrigin(appHomeUrl);
-                currentPageBaseUrl = "";
-                currentPageRef = null;
-                continue;
-              }
-
-              if (newUrl === currentUrl && currentPageRef) {
-                const actionShotBuffer = await page.screenshot({ fullPage: true, type: "jpeg", quality: 80 });
-                const { url } = await storage.save(
-                  `projects/${projectId}/discovery/page-${captured}-action-${actionCount}.jpg`,
-                  actionShotBuffer,
-                  "image/jpeg"
-                );
-                currentPageRef.actionScreenshots!.push({
-                  type: "modal",
-                  triggerText: nextAction.name,
-                  screenshot: url
-                });
-                await reporter.log(`Captured action state for "${nextAction.name}"`);
-              } else if (newUrl !== currentUrl) {
-                edges.push({ from: currentUrl, to: newUrl, label: nextAction.name || "Navigation" });
-                await reporter.log(`Navigated to new page: ${newUrl}`);
-              }
-            } else {
-              await reporter.log(`Element ${nextAction.name} not visible. Skipping.`);
-            }
-          } else {
-            await reporter.log(`Missing role or name for action. Skipping.`);
-          }
-        } catch (err) {
-          await reporter.log(`Action failed: ${err}`);
-        }
-      }
-    } else {
-      if (flags.hasOpenAI && !loggedIn) {
-        await reporter.log(
-          "Skipping AI exploration (unauthenticated) — using deterministic nav crawl instead.",
-        );
-      }
-      navLinks = await crawlNavigation(page, origin, reporter);
-      await reporter.log(`Found ${navLinks.length} navigation links.`);
-
-      async function captureActionScreenshots(pageUrl: string, pageIndex: number): Promise<ActionScreenshot[]> {
-        const actionScreenshots: ActionScreenshot[] = [];
-        const interactives = await extractInteractives(page);
-        
-        const triggers = interactives.filter(i => {
-          if (i.role === 'button' || i.tag.toLowerCase() === 'button') {
-            const lower = i.name.toLowerCase();
-            return ['add', 'new', 'create', 'edit', 'settings', 'menu', 'filter', 'options'].some(keyword => lower.includes(keyword));
-          }
-          return false;
-        }).slice(0, 4);
-
-        for (let i = 0; i < triggers.length; i++) {
-          const trigger = triggers[i];
-          try {
-            const el = page.locator(`text="${trigger.name}"`).first();
-            if (await el.isVisible().catch(() => false)) {
-              await reporter.log(`Clicking potential trigger: "${trigger.name}"...`);
-              await el.click({ timeout: 2000 });
-              await page.waitForTimeout(800);
-              
-              const buffer = await page.screenshot({ fullPage: true, type: "jpeg", quality: 80 });
-              const { url } = await storage.save(
-                `projects/${projectId}/discovery/page-${pageIndex}-action-${i}.jpg`,
-                buffer,
-                "image/jpeg"
-              );
-              actionScreenshots.push({
-                type: "modal",
-                triggerText: trigger.name,
-                screenshot: url
-              });
-              
-              await page.goto(pageUrl, { waitUntil: "load" });
-              await waitForAppReady(page);
-            }
-          } catch (err) {
-            // ignore error and continue
-          }
-        }
-        return actionScreenshots;
-      }
-
-      const homeUrl = page.url();
-      const homeShot = await captureScreenshots(page, projectId, captured);
-      await capturePageState();
-      const homeActions = await captureActionScreenshots(homeUrl, captured);
-      
-      pages.push({
-        url: homeUrl,
-        title: await page.title(),
-        screenshot: homeShot,
-        actionScreenshots: homeActions,
-      });
-      screenshots.push(homeShot);
-      captured++;
-
-      for (const link of navLinks) {
-        if (captured >= maxPages) break;
-        try {
-          if (!link.href.startsWith(origin)) continue;
-          await navigateAndWait(page, link.href);
-          const pageUrl = page.url();
-          const shot = await captureScreenshots(page, projectId, captured);
-          await capturePageState();
-          const actions = await captureActionScreenshots(pageUrl, captured);
-          
-          pages.push({
-            url: pageUrl,
-            title: (await page.title()) || link.label,
-            screenshot: shot,
-            actionScreenshots: actions,
-          });
-          screenshots.push(shot);
-          await reporter.log(`Captured "${link.label}"`);
-          captured++;
-        } catch {
-          await reporter.log(`Skipped "${link.label}" (failed to load).`);
+          /* partial saves are best-effort */
         }
       }
     }
 
+    // 3. Branding.
     let discoveredLogoUrl: string | undefined;
     if (!opts.existingLogoUrl) {
       discoveredLogoUrl = await fetchAndStoreSiteLogo(page, origin, projectId);
@@ -877,21 +1038,11 @@ export async function discoverApplication(
     await browser.close();
     browser = null;
 
-    const interactives = Array.from(interactivesMap.values()).slice(0, 30);
+    const map = { ...buildMap(), discoveredLogoUrl };
     await reporter.log(
-      `Cataloged ${interactives.length} interactive controls across ${pages.length} pages.`,
+      `Site map complete: ${map.pages.length} pages, ${map.edges?.length ?? 0} links, ${map.interactives?.length ?? 0} interactive controls.`,
     );
-
-    return {
-      pages,
-      navigation: navLinks.map((l) => l.label),
-      navLinks: navLinks.map((l) => ({ label: l.label, href: l.href })),
-      interactives,
-      screenshots,
-      uiText: Array.from(uiText),
-      discoveredLogoUrl,
-      edges: flags.hasOpenAI ? edges : undefined,
-    };
+    return map;
   } catch (err) {
     const detail = err instanceof Error ? err.message : String(err);
     await reporter.log(`Discovery via browser failed (${detail}).`);
@@ -900,5 +1051,86 @@ export async function discoverApplication(
     const hint = discoveryFailureHint(err, detail);
 
     throw new Error(`Browser discovery failed: ${detail}. ${hint}`);
+  }
+}
+
+export interface RecaptureOptions {
+  projectId: string;
+  url: string;
+  email: string;
+  password: string;
+  applicationMap: ApplicationMap;
+  reporter: PipelineReporter;
+  storageState?: StorageState | null;
+}
+
+/**
+ * Refresh the screenshots of an existing application map without re-crawling:
+ * revisit every mapped page and overwrite its stable-keyed screenshots.
+ */
+export async function recaptureScreenshots(
+  opts: RecaptureOptions,
+): Promise<ApplicationMap> {
+  const { reporter, projectId, url, email, password, applicationMap } = opts;
+  const origin = new URL(url).origin;
+
+  let browser: Browser | null = null;
+  try {
+    await reporter.log("Launching headless browser for recapture…");
+    browser = await launchChromium();
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      ignoreHTTPSErrors: true,
+      ...(opts.storageState ? { storageState: opts.storageState } : {}),
+    });
+    const page = await context.newPage();
+
+    await navigateAndWait(page, url);
+
+    let loggedIn = false;
+    if (opts.storageState) {
+      const probe = await verifyAuthenticated(page, origin);
+      if (probe.ok) {
+        loggedIn = true;
+        await reporter.log(`Reusing stored session (${probe.reason}).`);
+      }
+    }
+    if (!loggedIn) {
+      loggedIn = await login(page, email, password, reporter, { projectId });
+      if (loggedIn) await persistContextSession(projectId, context, reporter);
+    }
+
+    const pages = applicationMap.pages.map((p) => ({ ...p }));
+    const screenshots: string[] = [];
+    let refreshed = 0;
+
+    for (const pageRef of pages) {
+      const pattern = pageRef.routePattern ?? normalizeRoute(pageRef.url);
+      try {
+        await navigateAndWait(page, pageRef.url);
+        if (new URL(page.url()).origin !== origin) continue;
+        const shots = await capturePageScreenshots(page, projectId, pattern);
+        pageRef.screenshot = shots.fullUrl;
+        pageRef.viewportScreenshot = shots.viewportUrl;
+        pageRef.routePattern = pattern;
+        pageRef.title = (await page.title()) || pageRef.title;
+        screenshots.push(shots.fullUrl);
+        refreshed++;
+        await reporter.log(`Recaptured "${pageRef.title}" (${pattern}).`);
+      } catch {
+        if (pageRef.screenshot) screenshots.push(pageRef.screenshot);
+        await reporter.log(`Skipped recapture of ${pageRef.url} (failed to load).`);
+      }
+    }
+
+    await browser.close();
+    browser = null;
+
+    await reporter.log(`Recapture complete: ${refreshed}/${pages.length} pages refreshed.`);
+    return { ...applicationMap, pages, screenshots };
+  } catch (err) {
+    const detail = err instanceof Error ? err.message : String(err);
+    if (browser) await browser.close().catch(() => {});
+    throw new Error(`Recapture failed: ${detail}`);
   }
 }

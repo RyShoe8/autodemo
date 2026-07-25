@@ -14,7 +14,11 @@ import {
   resolveAndExecuteViaAi,
   shouldUseAiFallback,
 } from "@/lib/playwright/ai-resolver";
-import { login } from "@/lib/playwright/discovery";
+import { login, verifyAuthenticated } from "@/lib/playwright/discovery";
+import {
+  persistContextSession,
+  type StorageState,
+} from "@/lib/playwright/session";
 import { launchChromium, recordViewport } from "@/lib/playwright/browser";
 import { waitForInputReady } from "@/lib/playwright/modal-input";
 import { navigateAndWait } from "@/lib/playwright/spa";
@@ -46,6 +50,8 @@ export interface RecordOptions {
   workflow: WorkflowStep[];
   applicationMap?: ApplicationMap;
   reporter: Reporter;
+  /** Stored authenticated session to reuse (skips login when still valid). */
+  storageState?: StorageState | null;
 }
 
 function estimateDuration(step: WorkflowStep): number {
@@ -408,12 +414,33 @@ export async function executeWorkflow(
     const loginContext = await browser.newContext({
       viewport,
       ignoreHTTPSErrors: true,
+      ...(opts.storageState ? { storageState: opts.storageState } : {}),
     });
     const loginPage = await loginContext.newPage();
     const origin = new URL(url).origin;
 
     await navigateAndWait(loginPage, url);
-    const loggedIn = await login(loginPage, email, password, reporter);
+    let loggedIn = false;
+    if (opts.storageState) {
+      const probe = await verifyAuthenticated(loginPage, origin);
+      if (probe.ok) {
+        loggedIn = true;
+        await reporter.log(`Reusing stored session (${probe.reason}).`);
+      } else {
+        await reporter.log(
+          "Stored session no longer authenticated — logging in.",
+        );
+        await navigateAndWait(loginPage, url);
+      }
+    }
+    if (!loggedIn) {
+      loggedIn = await login(loginPage, email, password, reporter, {
+        projectId,
+      });
+      if (loggedIn) {
+        await persistContextSession(projectId, loginContext, reporter);
+      }
+    }
     if (!loggedIn) {
       await reporter.log(
         "WARNING: Recording without authenticated session — scenes may show login or public pages only.",

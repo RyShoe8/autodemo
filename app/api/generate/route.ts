@@ -61,7 +61,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (type === "discover" || type === "render_bumper") {
+    if (type === "discover" || type === "recapture" || type === "render_bumper") {
       const latestProjectJob = await db.getLatestJobByProject(projectId);
       if (latestProjectJob && isActiveJobStatus(latestProjectJob.status)) {
         return NextResponse.json(
@@ -71,7 +71,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    if (type === "discover") {
+    if (type === "recapture" && !project.applicationMap) {
+      return NextResponse.json(
+        { error: "Run discovery before refreshing screenshots" },
+        { status: 400 },
+      );
+    }
+
+    if (type === "discover" || type === "recapture") {
       await db.updateProject(projectId, { status: "discovering" });
     } else if (type === "render_bumper") {
       const brandingPatch: Parameters<typeof db.updateProject>[1] = {};

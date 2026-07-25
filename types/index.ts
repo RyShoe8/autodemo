@@ -37,6 +37,7 @@ export type JobStatus =
 
 export type JobType =
   | "discover"
+  | "recapture"
   | "build_workflow"
   | "produce"
   | "render_bumper";
@@ -85,7 +86,12 @@ export interface ActionScreenshot {
 export interface DiscoveredPage {
   url: string;
   title: string;
+  /** Normalized route pattern, e.g. "/items/:id" — dedupe + stable storage keys. */
+  routePattern?: string;
+  /** Full-page screenshot URL. */
   screenshot?: string;
+  /** Above-the-fold (viewport) screenshot URL. */
+  viewportScreenshot?: string;
   actionScreenshots?: ActionScreenshot[];
 }
 
@@ -190,6 +196,11 @@ export interface ProjectDTO {
   bumperTitle: string;
   bumperTagline?: string;
   createdAt: string;
+  /** Whether an imported/captured browser session is stored (value never exposed). */
+  hasStoredSession: boolean;
+  /** ISO timestamp of when the stored session was last saved. */
+  storageStateSavedAt?: string;
+  discoveryMaxPages?: number;
 }
 
 export interface JobDTO {

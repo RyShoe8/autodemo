@@ -5,7 +5,11 @@ import { db } from "@/lib/db";
 import { decrypt } from "@/lib/crypto";
 import { storage } from "@/lib/storage";
 import { PipelineContext } from "@/lib/workflow/context";
-import { discoverApplication } from "@/lib/playwright/discovery";
+import {
+  discoverApplication,
+  recaptureScreenshots,
+} from "@/lib/playwright/discovery";
+import { loadStoredSession } from "@/lib/playwright/session";
 import { executeWorkflow } from "@/lib/playwright/recording";
 import { generateWorkflow } from "@/lib/openai/workflow";
 import { generateScript, buildTemplateScript } from "@/lib/openai/script";
@@ -73,6 +77,9 @@ export async function runJob(job: JobRecord): Promise<void> {
       case "discover":
         await runDiscover(ctx, project);
         break;
+      case "recapture":
+        await runRecapture(ctx, project);
+        break;
       case "build_workflow": {
         if (!job.videoId) throw new Error("build_workflow requires videoId");
         const video = await db.getVideo(job.videoId);
@@ -116,7 +123,11 @@ export async function runJob(job: JobRecord): Promise<void> {
     });
     if (job.videoId) {
       await db.updateVideo(job.videoId, { status: "failed" });
-    } else if (job.type === "discover" || job.type === "render_bumper") {
+    } else if (
+      job.type === "discover" ||
+      job.type === "recapture" ||
+      job.type === "render_bumper"
+    ) {
       await db.updateProject(job.projectId, { status: "failed" });
     }
   }
@@ -126,6 +137,13 @@ async function runDiscover(ctx: PipelineContext, project: ProjectRecord) {
   await ctx.throwIfCancelled();
   await ctx.setStatus("discovering", "discovering", 5);
   const password = decrypt(project.encryptedPassword);
+  const storageState = loadStoredSession(project);
+  if (storageState) {
+    await ctx.log("Found stored browser session — will try to reuse it.");
+  }
+
+  const maxPages = project.discoveryMaxPages ?? 30;
+  let savedPages = 0;
 
   const applicationMap = await discoverApplication({
     projectId: project.id,
@@ -134,6 +152,16 @@ async function runDiscover(ctx: PipelineContext, project: ProjectRecord) {
     password,
     reporter: ctx,
     existingLogoUrl: project.logoUrl,
+    storageState,
+    maxPages,
+    onPartial: async (partial) => {
+      // Incremental save: a crash mid-crawl keeps everything captured so far.
+      savedPages = partial.pages.length;
+      await db.updateProject(project.id, { applicationMap: partial });
+      await ctx.setProgress(
+        Math.min(95, 5 + Math.round((savedPages / maxPages) * 90)),
+      );
+    },
   });
 
   const { discoveredLogoUrl, ...mapForStorage } = applicationMap;
@@ -146,6 +174,35 @@ async function runDiscover(ctx: PipelineContext, project: ProjectRecord) {
   });
 
   await ctx.log("Discovery complete — application map ready.");
+  await finishJobIfNotFailed(ctx, "completed", "ready");
+}
+
+async function runRecapture(ctx: PipelineContext, project: ProjectRecord) {
+  if (!project.applicationMap || project.applicationMap.pages.length === 0) {
+    throw new Error("Run discovery before refreshing screenshots.");
+  }
+
+  await ctx.throwIfCancelled();
+  await ctx.setStatus("discovering", "discovering", 5);
+  const password = decrypt(project.encryptedPassword);
+  const storageState = loadStoredSession(project);
+
+  const applicationMap = await recaptureScreenshots({
+    projectId: project.id,
+    url: project.url,
+    email: project.loginEmail,
+    password,
+    applicationMap: project.applicationMap,
+    reporter: ctx,
+    storageState,
+  });
+
+  await db.updateProject(project.id, {
+    applicationMap,
+    status: "ready",
+  });
+
+  await ctx.log("Screenshot refresh complete.");
   await finishJobIfNotFailed(ctx, "completed", "ready");
 }
 
@@ -242,6 +299,7 @@ async function runProduce(
     workflow: enrichedWorkflow,
     applicationMap: project.applicationMap,
     reporter: ctx,
+    storageState: loadStoredSession(project),
   });
   await ctx.log(`Captured ${recording.scenes.length} scenes.`);
   await ctx.setProgress(30);

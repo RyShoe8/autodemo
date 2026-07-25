@@ -21,6 +21,11 @@ export function toProjectDTO(record: ProjectRecord): ProjectDTO {
     bumperTitle: record.bumperTitle ?? record.name,
     bumperTagline: record.bumperTagline,
     createdAt: new Date(record.createdAt).toISOString(),
+    hasStoredSession: Boolean(record.encryptedStorageState),
+    storageStateSavedAt: record.storageStateSavedAt
+      ? new Date(record.storageStateSavedAt).toISOString()
+      : undefined,
+    discoveryMaxPages: record.discoveryMaxPages,
   };
 }
 

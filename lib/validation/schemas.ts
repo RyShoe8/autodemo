@@ -43,6 +43,7 @@ export const createProjectSchema = z.object({
   bumperDurationSeconds: z.number().min(2).max(8).default(4),
   bumperTitle: z.string().max(120).optional(),
   bumperTagline: z.string().max(200).optional(),
+  discoveryMaxPages: z.coerce.number().int().min(3).max(100).optional(),
 });
 
 export type CreateProjectValues = z.input<typeof createProjectSchema>;
@@ -142,7 +143,7 @@ export const generateSchema = z.object({
   projectId: z.string().min(1),
   videoId: z.string().min(1).optional(),
   type: z
-    .enum(["discover", "build_workflow", "produce", "render_bumper"])
+    .enum(["discover", "recapture", "build_workflow", "produce", "render_bumper"])
     .default("discover"),
   bumperTitle: z.string().max(120).optional(),
   bumperTagline: z.string().max(200).optional(),

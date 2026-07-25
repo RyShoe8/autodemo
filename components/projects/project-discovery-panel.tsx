@@ -43,7 +43,8 @@ export function ProjectDiscoveryPanel({
   const notifiedJobRef = useRef<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  const discoverJob = job?.type === "discover" ? job : null;
+  const discoverJob =
+    job?.type === "discover" || job?.type === "recapture" ? job : null;
   const jobStatus = discoverJob?.status;
   const isActive = jobStatus ? ACTIVE_STATUSES.includes(jobStatus) : false;
   const canDiscover =
@@ -81,6 +82,20 @@ export function ProjectDiscoveryPanel({
     }
   }
 
+  async function startRecapture() {
+    setBusy(true);
+    try {
+      await api.post("/api/generate", { projectId, type: "recapture" });
+      toast.success("Screenshot refresh started");
+      router.refresh();
+    } catch (err) {
+      setBusy(false);
+      toast.error(
+        err instanceof Error ? err.message : "Could not start screenshot refresh",
+      );
+    }
+  }
+
   const showLogs =
     discoverJob &&
     (isActive || discoverJob.status === "failed" || discoverJob.logs.length > 0);
@@ -106,6 +121,16 @@ export function ProjectDiscoveryPanel({
             )}
             {status === "ready" ? "Re-run discovery" : "Run discovery"}
           </Button>
+          {status === "ready" && (
+            <Button
+              variant="outline"
+              onClick={() => void startRecapture()}
+              disabled={busy || isActive}
+            >
+              <RefreshCw className="h-4 w-4" />
+              Refresh screenshots
+            </Button>
+          )}
           {status === "ready" && (
             <Button asChild variant="outline">
               <Link href={`/projects/${projectId}/videos/new`}>New video</Link>

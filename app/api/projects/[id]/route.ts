@@ -87,6 +87,9 @@ export async function PATCH(
     }
     if (data.bumperTitle !== undefined) patch.bumperTitle = data.bumperTitle;
     if (data.bumperTagline !== undefined) patch.bumperTagline = data.bumperTagline;
+    if (data.discoveryMaxPages !== undefined) {
+      patch.discoveryMaxPages = data.discoveryMaxPages;
+    }
 
     if (data.loginPassword && data.loginPassword.length > 0) {
       patch.encryptedPassword = encrypt(data.loginPassword);
@@ -98,6 +101,8 @@ export async function PATCH(
       (data.loginPassword !== undefined && data.loginPassword.length > 0);
 
     if (credentialsChanged) {
+      // The stored browser session belongs to the old URL/credentials.
+      patch.encryptedStorageState = "";
       patch.applicationMap = {
         pages: [],
         navigation: [],

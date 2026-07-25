@@ -15,6 +15,10 @@ export interface ProjectRecord {
   url: string;
   loginEmail: string;
   encryptedPassword: string;
+  /** Encrypted Playwright storageState JSON (cookies + localStorage). */
+  encryptedStorageState?: string;
+  storageStateSavedAt?: Date;
+  discoveryMaxPages?: number;
   applicationMap?: ApplicationMap;
   status: ProjectStatus;
   logoUrl?: string;
@@ -164,6 +168,7 @@ export interface DbBackend {
 export function firstStatusForType(type: JobType): JobStatus {
   switch (type) {
     case "discover":
+    case "recapture":
       return "discovering";
     case "build_workflow":
       return "building_workflow";
